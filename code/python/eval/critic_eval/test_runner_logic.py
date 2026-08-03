@@ -243,7 +243,16 @@ class TestMockMappings(unittest.TestCase):
         self.assertEqual(c["status"], "REJECT")
         self.assertTrue(c["source_issues"])
         self.assertFalse(c["logical_gaps"])
-        self.assertGreaterEqual(len(c["critique"]), 50)  # schema min_length
+        # Reinforce the constraint against the SOURCE OF TRUTH, not a copied magic
+        # number: the mock must be a VALID CriticReviewOutput. This ties the check
+        # to production's real schema — if the critique floor (or any field rule)
+        # changes upstream, this test tracks it automatically instead of drifting.
+        from reasoning.schemas import CriticReviewOutput
+        CriticReviewOutput(
+            status=c["status"], critique=c["critique"],
+            mode_compliance=c["mode_compliance"],
+            source_issues=c["source_issues"], logical_gaps=c["logical_gaps"],
+        )  # raises ValidationError if critique < min_length or any field invalid
 
 
 class TestFullMockPipeline(unittest.TestCase):
