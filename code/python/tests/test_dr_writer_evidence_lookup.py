@@ -198,6 +198,10 @@ class TestBuildWriterEvidenceLookup:
         orch._extract_item_fields = (
             DeepResearchOrchestrator._extract_item_fields.__get__(orch)
         )
+        # 發布日期錨定：lookup 會抽 datePublished，需綁真方法（否則拿到 MagicMock）
+        orch._extract_item_date = (
+            DeepResearchOrchestrator._extract_item_date.__get__(orch)
+        )
         orch._build_writer_evidence_lookup = (
             DeepResearchOrchestrator._build_writer_evidence_lookup.__get__(orch)
         )
@@ -260,6 +264,10 @@ class TestPhaseWriterWiring:
         orch._extract_item_fields = (
             DeepResearchOrchestrator._extract_item_fields.__get__(orch)
         )
+        # 發布日期錨定：lookup 會抽 datePublished，需綁真方法（否則拿到 MagicMock）
+        orch._extract_item_date = (
+            DeepResearchOrchestrator._extract_item_date.__get__(orch)
+        )
         orch._build_writer_evidence_lookup = (
             DeepResearchOrchestrator._build_writer_evidence_lookup.__get__(orch)
         )
@@ -285,7 +293,8 @@ class TestPhaseWriterWiring:
             result = await DeepResearchOrchestrator._phase_writer(orch, state)
 
         kwargs = orch.writer.compose.await_args.kwargs
+        # date 欄位為發布日期錨定所加（source_map 無 datePublished → 空字串）
         assert kwargs["evidence_lookup"] == {
-            1: {"title": "T", "site": "S", "url": "u", "snippet": "D"}
+            1: {"title": "T", "site": "S", "url": "u", "snippet": "D", "date": ""}
         }
         assert result.final_report is final_report

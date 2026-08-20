@@ -18,6 +18,7 @@ import os  # Add this import
 from misc.logger.logging_config_helper import get_configured_logger
 from core.llm import ask_llm
 from core.config import CONFIG
+from core.temporal_anchor import annotate_relative_years
 
 logger = get_configured_logger("prompts")
 prompt_runner_logger = get_configured_logger("prompt_runner")
@@ -169,7 +170,20 @@ def get_prompt_variable_value(variable, handler):
         else:
             value = ""
     elif variable == "request.answers":
-        value = str(handler.final_ranked_answers)
+        # 發布日期錨定（core.temporal_anchor）：synthesize / summarize 的整包報導素材。
+        # 逐筆用該報導自己的 datePublished 換算內文相對年份（「今年」→「今年（2025年）」），
+        # 否則 LLM 會拿 prompt 另一端的「今天是 YYYY-MM-DD」去換算 → 年份寫錯。
+        # 輸出形狀仍是 list 的字串表示，與原本一致。
+        _answers = getattr(handler, 'final_ranked_answers', []) or []
+        _parts = []
+        for _ans in _answers:
+            _date = ''
+            if isinstance(_ans, dict):
+                _schema = _ans.get('schema_object') or {}
+                if isinstance(_schema, dict):
+                    _date = _schema.get('datePublished', '') or ''
+            _parts.append(annotate_relative_years(str(_ans), _date))
+        value = "[" + ", ".join(_parts) + "]"
     elif variable == "tool.description":
         value = getattr(handler.tool, 'description', '')
     elif variable == "tools.description":

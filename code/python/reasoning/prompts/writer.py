@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from core.prompts import generate_boundary_token, wrap_content_with_boundary
 # P2 W6：runtime import 全 pool budget 常數（evidence_block char cap 用，§3.1 I3）。
 from reasoning.schemas_live import GROUNDING_VIEW_CHAR_BUDGET
+from core.temporal_anchor import annotate_relative_years, anchor_note, TEMPORAL_ANCHOR_RULE
 
 if TYPE_CHECKING:
     from reasoning.schemas_live import (
@@ -105,8 +106,13 @@ class WriterPromptBuilder:
         ]
         for cid in sorted(evidence_lookup):
             e = evidence_lookup[cid]
+            # 發布日期錨定：date 由 orchestrator._build_writer_evidence_lookup 帶入
+            # （snippet 也已在該處做過相對年份標註）。缺日期 → 兩者皆空字串，不影響原樣。
+            _date = e.get('date') or ''
+            _date_part = f"，{str(_date).split('T')[0]} 發布" if _date else ""
             lines.append(
-                f"- [{cid}] **{e.get('title') or '未知標題'}**（{e.get('site') or '未知來源'}）\n"
+                f"- [{cid}] **{e.get('title') or '未知標題'}**"
+                f"（{e.get('site') or '未知來源'}{_date_part}）{anchor_note(_date)}\n"
                 f"  - URL: {e.get('url') or '無 URL'}\n"
                 f"  - 摘要：{e.get('snippet') or ''}"
             )
@@ -116,6 +122,7 @@ class WriterPromptBuilder:
             "若某個 ID 的來源主題與你要寫的內容無關，**不要引用它**——"
             "寧可不掛引用並在文中誠實說明資料不足，也不可把無關來源掛在論述上。"
         )
+        lines.append(TEMPORAL_ANCHOR_RULE)
         return "\n".join(lines)
 
     def build_compose_prompt_with_plan(
@@ -949,8 +956,15 @@ class WriterPromptBuilder:
                 url = getattr(entry, "url", "") or "無 URL"
                 source_domain = getattr(entry, "source_domain", "") or "未知來源"
                 snippet = (getattr(entry, "snippet", "") or "")[:200]
+                # 發布日期錨定（core.temporal_anchor）：此清單原本不帶發布日期，
+                # writer 只好拿全域「今天」換算來源內文的「今年」→ 年份寫錯。
+                # 年份由 code 換算後就地標註，標頭補發布日期。
+                published_at = getattr(entry, "published_at", None)
+                snippet = annotate_relative_years(snippet, published_at)
+                _date_part = f"，{published_at} 發布" if published_at else ""
                 _line = (
-                    f"- {star}[{eid}] **{title}**（{source_domain}）\n"
+                    f"- {star}[{eid}] **{title}**（{source_domain}{_date_part}）"
+                    f"{anchor_note(published_at)}\n"
                     f"  - URL: {url}\n"
                     f"  - 摘要：{snippet}"
                 )
@@ -968,7 +982,8 @@ class WriterPromptBuilder:
             ev_lines.append(
                 "引用 [N] 時，請確保段落內容**真的基於該來源摘要**支持的事實。"
                 "★標記者為本章優先建議引用（優先採用），但你可引用上方任一全 pool 來源。"
-                "不要為了塞編號而引用無關事實。如果某個來源不適合，留下不用即可。"
+                "不要為了塞編號而引用無關事實。如果某個來源不適合，留下不用即可。\n"
+                + TEMPORAL_ANCHOR_RULE
             )
             evidence_block = "\n".join(ev_lines) + "\n"
 

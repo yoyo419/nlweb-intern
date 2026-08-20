@@ -7,6 +7,7 @@ Contains all prompt building logic for the Analyst Agent.
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from core.prompts import generate_boundary_token, wrap_content_with_boundary
+from core.temporal_anchor import TEMPORAL_ANCHOR_RULE
 
 
 class AnalystPromptBuilder:
@@ -380,6 +381,8 @@ Web Search 狀態：**已啟用**
 - 今天的日期：{current_date}
 - 新聞報導只可能來自過去，不可能來自未來
 - 若用戶提到月份但未指定年份，預設為最近的「過去」該月份
+- 「今天的日期」只用於理解**使用者問句**的相對時間，不可用來換算**來源內文**的相對時間
+- {TEMPORAL_ANCHOR_RULE}
 
 {mandatory_precheck}---
 

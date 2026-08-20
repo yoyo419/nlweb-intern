@@ -14,6 +14,7 @@ from urllib.parse import quote
 from misc.logger.logging_config_helper import get_configured_logger
 from core.retriever import search as retriever_search
 from core.config import CONFIG
+from core.temporal_anchor import annotate_relative_years, anchor_note, TEMPORAL_ANCHOR_RULE
 from reasoning.agents.analyst import AnalystAgent
 from reasoning.agents.critic import CriticAgent
 from reasoning.agents.writer import WriterAgent
@@ -447,9 +448,16 @@ class DeepResearchOrchestrator(OrchestratorBase):
             snippet = description[:snippet_length] + (
                 "..." if len(description) > snippet_length else ""
             )
+            # 發布日期錨定（core.temporal_anchor）：來源內文的「今年/去年」以該報導
+            # 發布年換算，年份由 code 算好標在詞後，LLM 不必拿全域「今天」去推
+            # → 不再把 2025 年報導的「今年」寫成 2026。標註在截斷後做，不動上方 char budget。
+            snippet = annotate_relative_years(snippet, date_published)
             header = f"[{idx}] {source} - {title}"
             if date_str:
                 header += f" ({date_str})"
+            note = anchor_note(date_published)
+            if note:
+                header += note
             formatted_parts.append(f"{header}\n{snippet}\n")
 
         formatted_string = "\n".join(formatted_parts)
@@ -503,6 +511,29 @@ class DeepResearchOrchestrator(OrchestratorBase):
             title, source, description, url = "No title", "Unknown", "", ""
         return title, source, description, url
 
+    def _extract_item_date(self, item) -> str:
+        """Shape-aware 抽 datePublished（發布日期錨定用）；抽不到回空字串（不猜年份）。
+
+        形狀同 _extract_item_fields：dict（tier6 web/wiki doc、私有檔）或 list/tuple
+        （站內 row，datePublished 藏在 item[1] schema_json 內）。
+        """
+        if isinstance(item, dict):
+            return str(item.get("datePublished", "") or "")
+        if isinstance(item, (list, tuple)):
+            try:
+                schema_json = item[1] if len(item) > 1 else "{}"
+                schema_obj = (
+                    json.loads(schema_json) if isinstance(schema_json, str) else schema_json
+                )
+                return str(schema_obj.get("datePublished", "") or "")
+            except Exception as e:
+                # 不可 silent fail：抽不到日期 → 該來源不做年份錨定，明示降級
+                self.logger.warning(
+                    f"_extract_item_date: failed to parse datePublished: {e}"
+                )
+                return ""
+        return ""
+
     def _build_critic_reference_sheet(self, citations_used: List[int]) -> str:
         """
         SEC-6: Build a compact reference sheet for Critic containing only cited sources.
@@ -527,9 +558,13 @@ class DeepResearchOrchestrator(OrchestratorBase):
                 continue
 
             title, source, description, _url = self._extract_item_fields(item)
+            date_published = self._extract_item_date(item)
 
             snippet = description[:snippet_length] + ("..." if len(description) > snippet_length else "")
-            parts.append(f"[{cid}] {source} - {title}\n{snippet}\n")
+            # 與 _format_context_shared 同口徑做發布日期錨定，否則 critic 讀到的
+            # 「今年」與 analyst/writer 讀到的年份不同步。
+            snippet = annotate_relative_years(snippet, date_published)
+            parts.append(f"[{cid}] {source} - {title}{anchor_note(date_published, include_date=True)}\n{snippet}\n")
 
         return "\n".join(parts)
 
@@ -591,6 +626,8 @@ class DeepResearchOrchestrator(OrchestratorBase):
 {current_time.strftime('%Y-%m-%d %H:%M:%S')} {weekday} ({timezone_str})
 
 當用戶詢問「今天」、「最近」、「現在」等時間相關詞彙時，請參考上述當前時間。
+**注意：上述當前時間只用於理解「使用者問句」的相對時間，不可用來換算「來源內文」的相對時間。**
+{TEMPORAL_ANCHOR_RULE}
 
 ## 可用資料來源
 """
@@ -1796,11 +1833,15 @@ class DeepResearchOrchestrator(OrchestratorBase):
             if item is None:
                 continue  # SEC-5 已濾 phantom；防禦性跳過
             title, source, description, url = self._extract_item_fields(item)
+            date_published = self._extract_item_date(item)
             lookup[cid] = {
                 "title": title,
                 "site": source,
                 "url": url,
-                "snippet": (description or "")[:200],
+                # 發布日期錨定（core.temporal_anchor）：writer 讀這份摘要寫報告，
+                # 沒有發布日期就會拿全域「今天」去換算內文的「今年」。
+                "snippet": annotate_relative_years((description or "")[:200], date_published),
+                "date": str(date_published or ""),
             }
         return lookup
 

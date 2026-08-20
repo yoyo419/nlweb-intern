@@ -677,7 +677,10 @@ MAX_EVIDENCE_ITEMS = 80        # 次要 backstop：絕對不超過幾筆。放�
                                # char budget 先觸發 —— per-item snippet[:200] 估 ~303 字，
                                # 40*303≈12120<20000（N 會先 bind 使 budget 虛設），
                                # 80*303≈24240>20000（char budget 先 drop，N 只當極短 snippet 洪水 backstop）。
-_EVIDENCE_OVERHEAD_PER_ITEM = 100   # 每筆 marker + title + url + 換行估算
+_EVIDENCE_OVERHEAD_PER_ITEM = 150   # 每筆 marker + title + url + 換行估算
+                                    # （150 非 100：writer evidence 行新增發布日期與
+                                    # 「今年＝YYYY 年」錨定註記約 45 字，見
+                                    # prompts/writer.py evidence_block 與 core/temporal_anchor.py）
 _EVIDENCE_SNIPPET_CHARS = 200       # 與下游 writer prompts/writer.py:808 的 (snippet)[:200] 對齊
 
 # P2 W9（SF1 / §3.1）：per-chapter evidence 充分度門檻（抽 module 常數，不留 inline 魔術數字）。

@@ -21,6 +21,7 @@ from core.prompts import PromptRunner, find_prompt, fill_prompt
 from core.retriever import search
 from core.utils.json_utils import trim_json, trim_json_hard
 from core.utils.utils import log, get_param
+from core.temporal_anchor import annotate_relative_years, anchor_note, TEMPORAL_ANCHOR_RULE
 from misc.logger.logging_config_helper import get_configured_logger
 import core.query_analysis.analyze_query as analyze_query
 import core.query_analysis.relevance_detection as relevance_detection
@@ -133,6 +134,11 @@ class GenerateAnswer(NLWebHandler):
             # DEBUG: Check what prompt we got
 
             description = trim_json_hard(json_str)
+            # 發布日期錨定（core.temporal_anchor）：ranking 產出的 description 會直接
+            # 變成卡片摘要、並被 request.answers 帶進 synthesize/summarize。若不錨定，
+            # 2025 年報導的「今年」會被 LLM 依「今天」改寫成當前年。
+            # str(): trim_json_hard 回 dict，而 fill_prompt 最後也是 str(value) → 內容等價
+            description = annotate_relative_years(str(description), date_published)
 
             prompt = fill_prompt(prompt_str, self, {
                 "item.description": description,
@@ -624,9 +630,11 @@ class GenerateAnswer(NLWebHandler):
                     if date:
                         date = date.split('T')[0]  # Just the date part
 
+                    # 發布日期錨定（core.temporal_anchor）：內文「今年」以該報導發布年換算
+                    desc = annotate_relative_years(desc, date)
                     article_context += f"文章 {idx}: {title}\n"
                     if source or date:
-                        article_context += f"   來源: {source} | 日期: {date}\n"
+                        article_context += f"   來源: {source} | 日期: {date}{anchor_note(date)}\n"
                     article_context += f"   摘要: {desc}\n"
                     if url:
                         article_context += f"   網址: {url}\n"
@@ -677,6 +685,7 @@ class GenerateAnswer(NLWebHandler):
             # Shared system context for all prompt variants (Bug #1, #3, #9, #24)
             system_context = f"""**今天的日期是：{current_date}**
 如果用戶詢問日期相關問題，請使用此日期，不要從搜尋結果中推測日期。
+{TEMPORAL_ANCHOR_RULE}
 
 **重要系統限制**：
 - 你只能存取資料庫中已收錄的新聞，不代表所有新聞。

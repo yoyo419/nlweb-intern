@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from core.retriever import search as retriever_search  # Track E (sprint 2026-05-28): module-level for monkeypatch testability
+from core.temporal_anchor import annotate_relative_years, anchor_note
 from misc.logger.logging_config_helper import get_configured_logger
 from reasoning.agents.associator import AssociatorAgent
 from reasoning.live_research import lr_copy
@@ -30,6 +31,26 @@ from reasoning.schemas_live import (
     EvidencePoolEntry,
     context_map_to_summary,
 )
+
+
+def _format_search_result_line(
+    evidence_id: int, title: str, desc: str, url: str, published_at: Optional[str]
+) -> str:
+    """搜尋結果餵給 analyst 的單行渲染（含發布日期錨定）。
+
+    抽成 module-level helper 是為了可被單測直接驗（原本埋在 _execute_search 內，
+    沒有機械防線鎖住「日期有送進去」）。
+
+    修的症狀：原本這行只送 [id] 標題 / 內文 / URL，**完全沒有發布日期**，
+    analyst 只看得到內文 + 別處注入的「今天是 YYYY-MM-DD」→ 2025 年報導寫的
+    「今年」被寫成當前年。改：標頭附發布日期與錨定註記，內文相對年份就地標絕對年份。
+    """
+    snippet = annotate_relative_years(desc[:500], published_at)
+    date_part = f" ({published_at})" if published_at else ""
+    return (
+        f"[{evidence_id}] {title}{date_part}{anchor_note(published_at)}\n"
+        f"{snippet}\nURL: {url}\n"
+    )
 
 
 def _extract_domain(url: str) -> str:
@@ -716,7 +737,9 @@ class BABLoopEngine:
                     source="web" if url and url in web_urls else "internal",  # 🔧 R1
                 )
 
-            formatted_lines.append(f"[{evidence_id}] {title}\n{desc[:500]}\nURL: {url}\n")
+            formatted_lines.append(
+                _format_search_result_line(evidence_id, title, desc, url, published_at)
+            )
             iteration_source_map[evidence_id] = item
 
         if filtered_count > 0 and tc is not None:

@@ -9,6 +9,7 @@ Backwards compatibility is not guaranteed at this time.
 """
 
 from core.utils.json_utils import trim_json
+from core.temporal_anchor import annotate_relative_years
 from core.llm import ask_llm
 from core.prompts import find_prompt, fill_prompt
 from core.schemas import create_assistant_result, Message, SenderType
@@ -23,6 +24,17 @@ from typing import Dict
 from core.query_logger import get_query_logger
 
 logger = get_configured_logger("ranking_engine")
+
+
+def _item_date_published(json_str) -> str:
+    """從 schema_json 抽 datePublished（發布日期錨定用）；抽不到回空字串（不猜年份）。"""
+    try:
+        schema_obj = json.loads(json_str) if isinstance(json_str, str) else (json_str or {})
+        return str(schema_obj.get("datePublished", "") or "")
+    except Exception as e:
+        # 不可 silent fail：抽不到 → 該筆不做年份錨定，明示降級
+        logger.warning(f"_item_date_published: failed to parse datePublished: {e}")
+        return ""
 
 
 def dedup_by_title_and_source(results: list) -> list:
@@ -161,6 +173,11 @@ class Ranking:
 
             prompt_str, ans_struc = self.get_ranking_prompt()
             description = trim_json(json_str)
+            # 發布日期錨定（core.temporal_anchor）：ranking 產出的 description 就是卡片摘要，
+            # 也是 summarize 的素材。內文「今年」以該報導發布年換算，年份由 code 標好，
+            # 免得 LLM 拿 prompt 另一端的「今天」推成當前年。
+            # str(): trim_json 回 dict，而 fill_prompt 最後也是 str(value) → 內容等價
+            description = annotate_relative_years(str(description), _item_date_published(json_str))
             prompt = fill_prompt(prompt_str, self.handler, {"item.description": description})
             ranking = await ask_llm(prompt, ans_struc, level=self.level, query_params=self.handler.query_params)
 

@@ -26,6 +26,7 @@ from pydantic import (
     model_validator,
 )
 
+from core.temporal_anchor import annotate_relative_years, anchor_note
 from misc.logger.logging_config_helper import get_configured_logger
 
 logger = get_configured_logger("reasoning.schemas_live")
@@ -1668,7 +1669,13 @@ def render_grounding_evidence_view(
         snippet = getattr(entry, "snippet", "") or ""  # 個別不截斷
         if not (title or snippet):
             continue
-        block_lines = [f"### [{eid}] {title}"]
+        # 發布日期錨定（core.temporal_anchor）：writer / critic 兩邊都吃這個視圖，
+        # 原本完全不帶發布日期 → 來源內文的「今年」會被當成「今天那年」。
+        # 年份由 code 換算後就地標註，並在標頭補發布日期。
+        published_at = getattr(entry, "published_at", None)
+        snippet = annotate_relative_years(snippet, published_at)
+        _date_part = f"（{published_at}）" if published_at else ""
+        block_lines = [f"### [{eid}] {title}{_date_part}{anchor_note(published_at)}"]
         if snippet:
             block_lines.append(snippet)
         for gc in _renderable_claims(eid):

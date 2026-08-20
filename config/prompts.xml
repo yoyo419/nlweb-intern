@@ -117,6 +117,8 @@
 
     <Prompt ref="RankingPrompt">
       <promptString>
+        【時間換算規則】報導內文的相對時間（今年／去年／明年／本月／上週等）一律以**該篇報導自己的發布日期**為基準換算，不可用今天的日期換算。例：2025-09-12 發布的報導寫「今年」＝2025 年。輸出時直接寫換算後的絕對年份（如「2025 年」），不要照抄摘要中系統加註的括號（如「今年（2025年）」）。
+
         針對以下報導，評估與使用者提問的相關程度，給予 0-100 分。
         一律使用繁體中文回應，除非使用者明確要求用英文。
 
@@ -147,6 +149,8 @@
 
     <Prompt ref="RankingPromptForGenerate">
       <promptString>
+        【時間換算規則】報導內文的相對時間（今年／去年／明年／本月／上週等）一律以**該篇報導自己的發布日期**為基準換算，不可用今天的日期換算。例：2025-09-12 發布的報導寫「今年」＝2025 年。輸出時直接寫換算後的絕對年份（如「2025 年」），不要照抄摘要中系統加註的括號（如「今年（2025年）」）。
+
         你是資深新聞評估員。針對以下報導，從多個面向評估與使用者提問的相關程度。
         一律使用繁體中文回應，除非使用者明確要求用英文。
 
@@ -230,6 +234,8 @@
     
     <Prompt ref="SynthesizePromptForGenerate">
       <promptString>
+        【時間換算規則】報導內文的相對時間（今年／去年／明年／本月／上週等）一律以**該篇報導自己的發布日期**為基準換算，不可用今天的日期換算。例：2025-09-12 發布的報導寫「今年」＝2025 年。輸出時直接寫換算後的絕對年份（如「2025 年」），不要照抄摘要中系統加註的括號（如「今年（2025年）」）。
+
         根據以下新聞報導，針對使用者提問撰寫完整分析。
         一律使用繁體中文回應，除非使用者明確要求用英文。
 
@@ -306,6 +312,8 @@
      (b) prompt_default_fallback_enabled=true 時其他 matched site 缺 prompt 的 fallback（4a plan D2）。 -->
      <Prompt ref="SummarizeResultsPrompt">
       <promptString>
+        【時間換算規則】報導內文的相對時間（今年／去年／明年／本月／上週等）一律以**該篇報導自己的發布日期**為基準換算，不可用今天的日期換算。例：2025-09-12 發布的報導寫「今年」＝2025 年。輸出時直接寫換算後的絕對年份（如「2025 年」），不要照抄摘要中系統加註的括號（如「今年（2025年）」）。
+
         根據以下新聞報導，針對使用者提問撰寫完整摘要。
         一律使用繁體中文回應，除非使用者明確要求用英文。
 
@@ -372,6 +380,8 @@
 
     <Prompt ref="DescriptionPromptForGenerate">
       <promptString>
+        【時間換算規則】報導內文的相對時間（今年／去年／明年／本月／上週等）一律以**該篇報導自己的發布日期**為基準換算，不可用今天的日期換算。例：2025-09-12 發布的報導寫「今年」＝2025 年。輸出時直接寫換算後的絕對年份（如「2025 年」），不要照抄摘要中系統加註的括號（如「今年（2025年）」）。
+
         從以下報導中擷取與使用者提問最相關的 3 項重點，撰寫事實摘要。
         一律使用繁體中文回應，除非使用者明確要求用英文。
 
@@ -549,6 +559,8 @@
     
     <Prompt ref="RankingPrompt">
       <promptString>
+        TEMPORAL RESOLUTION RULE: Relative time expressions inside an article (今年/去年/明年, "this year", "last month", ...) MUST be resolved against THAT ARTICLE'S OWN publication date, never against today's date. Example: an article published 2025-09-12 saying 今年 means 2025. Write the resolved absolute year (e.g. "2025") in your output; do not copy the system-added parenthetical annotation (e.g. 今年（2025年）) verbatim.
+
         Assign a score between 0 and 100 to the following statistical data point
         based on how relevant it is to the user's question about demographic or economic indicators.
 
@@ -576,6 +588,8 @@
     <Item>
       <Prompt ref="RankingPrompt">
         <promptString>
+          TEMPORAL RESOLUTION RULE: Relative time expressions inside an article (今年/去年/明年, "this year", "last month", ...) MUST be resolved against THAT ARTICLE'S OWN publication date, never against today's date. Example: an article published 2025-09-12 saying 今年 means 2025. Write the resolved absolute year (e.g. "2025") in your output; do not copy the system-added parenthetical annotation (e.g. 今年（2025年）) verbatim.
+
           Assign a score between 0 and 100 to the following item from {item.source_site}
           based on how relevant it is to the user's question across all sites.
 
@@ -605,6 +619,8 @@
 
       <Prompt ref="RankingPromptForGenerate">
         <promptString>
+          TEMPORAL RESOLUTION RULE: Relative time expressions inside an article (今年/去年/明年, "this year", "last month", ...) MUST be resolved against THAT ARTICLE'S OWN publication date, never against today's date. Example: an article published 2025-09-12 saying 今年 means 2025. Write the resolved absolute year (e.g. "2025") in your output; do not copy the system-added parenthetical annotation (e.g. 今年（2025年）) verbatim.
+
           You are a sophisticated news search ranker. Evaluate this article across multiple signals:
 
           **USER QUERY**: "{request.query}"
@@ -682,6 +698,8 @@
 
       <Prompt ref="SynthesizePromptForGenerate">
         <promptString>
+          TEMPORAL RESOLUTION RULE: Relative time expressions inside an article (今年/去年/明年, "this year", "last month", ...) MUST be resolved against THAT ARTICLE'S OWN publication date, never against today's date. Example: an article published 2025-09-12 saying 今年 means 2025. Write the resolved absolute year (e.g. "2025") in your output; do not copy the system-added parenthetical annotation (e.g. 今年（2025年）) verbatim.
+
           Given the following items, synthesize a comprehensive answer to the user's question.
 
           CURRENT DATE: Today is {system.current_date}. You are answering questions based on news articles. Do not make predictions about the future.
@@ -789,6 +807,8 @@
 
       <Prompt ref="DescriptionPromptForGenerate">
         <promptString>
+          TEMPORAL RESOLUTION RULE: Relative time expressions inside an article (今年/去年/明年, "this year", "last month", ...) MUST be resolved against THAT ARTICLE'S OWN publication date, never against today's date. Example: an article published 2025-09-12 saying 今年 means 2025. Write the resolved absolute year (e.g. "2025") in your output; do not copy the system-added parenthetical annotation (e.g. 今年（2025年）) verbatim.
+
           Extract and summarize the 3 most important points from this article that relate to the user's query.
 
           CRITICAL REQUIREMENTS:
@@ -863,6 +883,8 @@
      （flag 已於 prod ON 且穩定），見 find-prompt-fallback-qu-revival-plan §5 gate #4。 -->
       <Prompt ref="SummarizeResultsPrompt">
         <promptString>
+        【時間換算規則】報導內文的相對時間（今年／去年／明年／本月／上週等）一律以**該篇報導自己的發布日期**為基準換算，不可用今天的日期換算。例：2025-09-12 發布的報導寫「今年」＝2025 年。輸出時直接寫換算後的絕對年份（如「2025 年」），不要照抄摘要中系統加註的括號（如「今年（2025年）」）。
+
         根據以下新聞報導，針對使用者提問撰寫完整摘要。
         一律使用繁體中文回應，除非使用者明確要求用英文。
 
