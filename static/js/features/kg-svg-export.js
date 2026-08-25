@@ -27,16 +27,51 @@ export const EXPORT_CSS = [
 
 const XMLNS = 'http://www.w3.org/2000/svg';
 
+// XML 1.0 禁止的字元（除 \t \n \r 外的 C0 控制碼、U+FFFE/U+FFFF）。
+// 為什麼要擋：`.svg` 是**嚴格 XML**，只要夾帶一個非法字元，整份文件解析失敗——
+// 瀏覽器不會畫圖，改顯示 XML 錯誤頁並把文件原始碼一起印出來，使用者看到的就是
+// 「下載下來是一大串標籤文字」。node/edge label 來自 LLM 抽取 + 爬取內文，不保證
+// 乾淨（XMLSerializer 只 escape `<`/`&`/`"`，控制碼原樣輸出），故序列化後統一剔除。
+const XML_ILLEGAL_CTRL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g;
+
+// 純字串：剔除會讓 SVG 無法被 XML parser 接受的字元。
+// 兩段：C0 控制碼 regex 一次掃掉；孤兒 surrogate（未成對的 U+D800-DFFF，
+// 同樣是 XML 非法字元）逐字掃——不用 lookbehind，避免舊版 Safari 不支援。
+export function stripXMLIllegalChars(s) {
+    const out = String(s == null ? '' : s).replace(XML_ILLEGAL_CTRL, '');
+    // 快路徑：中文/英數皆在 BMP 且非 surrogate 區，絕大多數匯出不需逐字掃。
+    if (!/[\uD800-\uDFFF]/.test(out)) return out;
+    let res = '';
+    for (let i = 0; i < out.length; i++) {
+        const c = out.charCodeAt(i);
+        if (c >= 0xD800 && c <= 0xDBFF) {
+            const next = out.charCodeAt(i + 1);
+            if (next >= 0xDC00 && next <= 0xDFFF) {   // 成對（emoji 等）→ 保留
+                res += out[i] + out[i + 1];
+                i++;
+            }
+            // 落單的 high surrogate → 丟棄
+        } else if (c >= 0xDC00 && c <= 0xDFFF) {
+            // 落單的 low surrogate → 丟棄
+        } else {
+            res += out[i];
+        }
+    }
+    return res;
+}
+
 // 純字串：SVG 內容 → standalone 可離線開啟字串。
 export function buildStandaloneSVG(innerSVG, opts = {}) {
-    let svg = innerSVG;
+    // 先清非法字元，再做任何字串加工（清洗必須涵蓋注入前的整份內容）。
+    let svg = stripXMLIllegalChars(innerSVG);
     // 確保 root svg 有 xmlns（只在缺時加）。
     if (!svg.includes(`xmlns="${XMLNS}"`)) {
         svg = svg.replace(/^<svg/, `<svg xmlns="${XMLNS}"`);
     }
-    // 注入 <style>（緊接在 <svg ...> 後）。
-    const css = opts.css || EXPORT_CSS;
-    svg = svg.replace(/(<svg[^>]*>)/, `$1<style>${css}</style>`);
+    // 注入 <style>（緊接在 <svg ...> 後）。用 replacer function 而非 `$1` 樣板：
+    // CSS 若含 `$&`／`$'` 等 replacement pattern 會被字串形式的 replace 展開成別的內容。
+    const css = stripXMLIllegalChars(opts.css || EXPORT_CSS);
+    svg = svg.replace(/(<svg[^>]*>)/, (rootTag) => `${rootTag}<style>${css}</style>`);
     return `<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n${svg}`;
 }
 
