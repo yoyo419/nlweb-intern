@@ -108,6 +108,62 @@ export function getTop10Articles() {
     return lastSession.data.content.slice(0, 10);
 }
 
+// Helper: 一筆 session 的「分析內容」→ { label, text }；無可匯出內容回 null。
+//
+// 為什麼需要這層：**DR / LR 沒有「綜合摘要」這個東西**。一般搜尋的摘要在
+// `session.data.answer`；DR / LR 的報告本文則在 `session.researchReport.report`
+// （deep-research.js:1751 push 進 sessionHistory 的形狀）。三個匯出 builder 原本
+// 一律只讀 data.answer → DR / LR 每一筆都落空，複製出來只剩一個空的
+// 【讀豹分析摘要】標頭（CEO 回報現象）。
+export function getSessionAnalysisBlock(session, format = 'plain') {
+    if (session?.data?.answer) {
+        return { label: '', text: cleanHTMLContent(session.data.answer, format) };
+    }
+    const report = session?.researchReport?.report;
+    if (report) {
+        return {
+            label: session.isLiveResearch ? '即時研究報告' : '深度研究報告',
+            text: cleanHTMLContent(report, format)
+        };
+    }
+    return null;
+}
+
+// Helper: 全部 session 的分析內容（已濾掉空的）。builder 先取這個再決定要不要印標頭，
+// 避免「有 session 但沒有任何可匯出內容」時印出空標頭。
+export function getAnalysisBlocks(format = 'plain') {
+    return getSessionHistory()
+        .map(s => getSessionAnalysisBlock(s, format))
+        .filter(b => b && b.text);
+}
+
+// Helper: DR / LR 的引用來源（最近一筆有來源的 research session）。
+//
+// 報告內文帶 `[N]` 引用標記，來源清單在 `researchReport.sources`——**URL 字串陣列**，
+// 編號 = 位置 + 1（與 deep-research.js::generateCitationReferenceList 同一套編號）。
+// 這與一般搜尋的文章卡（`data.content` → getTop10Articles）是不同資料，DR 沒有後者；
+// 不附這段的話，貼出去的報告裡 [1][2] 全部斷鏈、無從查證。
+export function getResearchSources() {
+    const hist = getSessionHistory();
+    for (let i = hist.length - 1; i >= 0; i--) {
+        const srcs = hist[i]?.researchReport?.sources;
+        if (Array.isArray(srcs) && srcs.length > 0) {
+            return srcs
+                .map((url, idx) => ({ index: idx + 1, url: String(url || '').trim() }))
+                .filter(s => s.url);
+        }
+    }
+    return [];
+}
+
+// Helper: 來源 URL → 可讀標示。非 http(s) 的內部 URN 直接貼出去對讀者沒有意義
+// （鏡像 generateCitationReferenceList 的分類）。
+export function describeSourceURL(url) {
+    if (url.startsWith('urn:llm:knowledge:')) return '讀豹背景知識（無外部連結）';
+    if (url.startsWith('private://')) return '私人文件（無外部連結）';
+    return url;
+}
+
 // Format content for plain text export
 export function formatPlainText() {
     let content = '';
@@ -130,14 +186,13 @@ export function formatPlainText() {
         content += `\n`;
     }
 
-    // AI answers from search results
-    if (getSessionHistory().length > 0) {
+    // AI answers from search results（含 DR / LR 報告本文）
+    const analysisBlocks = getAnalysisBlocks('plain');
+    if (analysisBlocks.length > 0) {
         content += `【讀豹分析摘要】\n`;
-        getSessionHistory().forEach((session, idx) => {
-            if (session.data && session.data.answer) {
-                const plainAnswer = cleanHTMLContent(session.data.answer, 'plain');
-                content += `${plainAnswer}\n\n`;
-            }
+        analysisBlocks.forEach(block => {
+            if (block.label) content += `〈${block.label}〉\n`;
+            content += `${block.text}\n\n`;
         });
     }
 
@@ -171,6 +226,16 @@ export function formatPlainText() {
         });
     }
 
+    // DR / LR 引用來源（報告內文的 [N] 對應此清單；一般搜尋無此段）
+    const plainSources = getResearchSources();
+    if (plainSources.length > 0) {
+        content += `【參考資料來源（${plainSources.length} 筆）】\n`;
+        plainSources.forEach(s => {
+            content += `[${s.index}] ${describeSourceURL(s.url)}\n`;
+        });
+        content += `\n`;
+    }
+
     return content;
 }
 
@@ -192,14 +257,13 @@ export function formatForAIChatbot() {
         content += `\n`;
     }
 
-    // AI analysis
-    if (getSessionHistory().length > 0) {
+    // AI analysis（含 DR / LR 報告本文）
+    const chatBlocks = getAnalysisBlocks('markdown');
+    if (chatBlocks.length > 0) {
         content += `【讀豹分析摘要】\n`;
-        getSessionHistory().forEach((session, idx) => {
-            if (session.data && session.data.answer) {
-                const cleanAnswer = cleanHTMLContent(session.data.answer, 'markdown');
-                content += `${cleanAnswer}\n\n`;
-            }
+        chatBlocks.forEach(block => {
+            if (block.label) content += `〈${block.label}〉\n`;
+            content += `${block.text}\n\n`;
         });
     }
 
@@ -231,6 +295,16 @@ export function formatForAIChatbot() {
             if (desc) content += `   摘要：${desc}\n`;
             content += `\n`;
         });
+    }
+
+    // DR / LR 引用來源（報告內文的 [N] 對應此清單；一般搜尋無此段）
+    const chatSources = getResearchSources();
+    if (chatSources.length > 0) {
+        content += `【參考資料來源（${chatSources.length} 筆）】\n`;
+        chatSources.forEach(s => {
+            content += `[${s.index}] ${describeSourceURL(s.url)}\n`;
+        });
+        content += `\n`;
     }
 
     content += `---\n請基於以上資訊幫我進行分析。`;
@@ -266,14 +340,13 @@ export function formatForNotebookLM() {
         content += `\n`;
     }
 
-    // AI analysis
-    if (getSessionHistory().length > 0) {
+    // AI analysis（含 DR / LR 報告本文）
+    const nbBlocks = getAnalysisBlocks('markdown');
+    if (nbBlocks.length > 0) {
         content += `## 讀豹分析摘要\n\n`;
-        getSessionHistory().forEach((session, idx) => {
-            if (session.data && session.data.answer) {
-                const cleanAnswer = cleanHTMLContent(session.data.answer, 'markdown');
-                content += `${cleanAnswer}\n\n`;
-            }
+        nbBlocks.forEach(block => {
+            if (block.label) content += `### ${block.label}\n\n`;
+            content += `${block.text}\n\n`;
         });
     }
 
@@ -306,6 +379,16 @@ export function formatForNotebookLM() {
             if (desc) content += `\n${desc}\n`;
             content += `\n---\n\n`;
         });
+    }
+
+    // DR / LR 引用來源（報告內文的 [N] 對應此清單；一般搜尋無此段）
+    const nbSources = getResearchSources();
+    if (nbSources.length > 0) {
+        content += `## 參考資料來源（${nbSources.length} 筆）\n\n`;
+        nbSources.forEach(s => {
+            content += `${s.index}. ${describeSourceURL(s.url)}\n`;
+        });
+        content += `\n`;
     }
 
     return content;
