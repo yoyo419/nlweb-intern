@@ -358,6 +358,7 @@ Edit mode 在**完整圖**上操作（`_kgEditData` 完整 clone，不走 `proje
 
 - **下載圖譜**按鈕（`kgDownloadBtn` / `lrKGDownloadBtn`）：DR/LR 對稱。點擊當下才序列化畫面上的 graph view SVG（lazy），匯出**當前可見子圖**含當下 zoom/pan 狀態（所見即所得，非完整佈局大圖）。
 - **序列化**：`kg-svg-export.js::serializeGraphSVG()` clone SVG DOM → `buildStandaloneSVG()` 注入 XML 宣告 + xmlns + inline `<style>`（`EXPORT_CSS`，因 label 樣式在 CSS class 不隨 DOM 序列化）。
+- **XML 合法性防線**：`buildStandaloneSVG()` 輸出前跑 `stripXMLIllegalChars()`，剔除 XML 1.0 非法字元（除 `\t\n\r` 外的 C0 控制碼、落單 surrogate、U+FFFE/U+FFFF）。`.svg` 走嚴格 XML 解析，夾帶一個非法字元就整份解析失敗 → 瀏覽器改顯示 XML 錯誤頁並印出原始碼，使用者回報形態是「下載下來是一大串標籤文字」。node/edge label 源自 LLM 抽取 + 爬取內文，`XMLSerializer` 只 escape `<`/`&`/`"`、控制碼原樣輸出，故需此防線。純函式測試見 `static/js/features/__tests__/kg-svg-export.test.js`（已做 mutation 驗證）。
 - **字型取捨**：不 embed 字型；離線開啟 fall back 到系統中文字型（Microsoft JhengHei 等），中文仍可見、字體可能不同。embed Noto Sans TC（base64 woff）為未實作的 optional。
 - **下載**：`downloadTextAsFile()`（沿用 `live-research.js` blob download pattern），檔名 `kg-<焦點名>.svg`（`buildExportFilename` sanitize）。
 - **報告匯出不含 KG**：報告匯出保持純文字/markdown（2026-07-21 `750e1488` 已拔除報告內 KG JSON）；KG 匯出是獨立的 SVG 下載，兩者不混。
