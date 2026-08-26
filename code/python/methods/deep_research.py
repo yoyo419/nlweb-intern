@@ -443,6 +443,37 @@ class DeepResearchHandler(NLWebHandler):
             }
         }]
 
+    @staticmethod
+    def _count_analyzed_sources(results: list) -> Optional[int]:
+        """回「這份報告實際分析了幾個來源」；取不到權威值時回 None（呼叫端據此不印假數字）。
+
+        ⚠️ **不可用 `len(results)`**：`orchestrator.run_research()` / `run_research_rerun()`
+        一律回**單一元素**的 list（`_format_result()` 只把整份報告包成一個 Item），
+        故 `len(results)` 恆為 1，與報告內文的 `[1]..[N]` 引用毫無關係
+        （CEO 回報症狀：報告引用了十個來源，「分析來源數」卻寫 1）。
+
+        權威值取用順序：
+          1. `schema_object["total_sources_analyzed"]`——orchestrator 以 `len(context)` 算的
+             「送進 Analyst 的來源數」，也就是 citation ID 1..N 的 N（source_map 與 context 1:1）。
+          2. `schema_object["sources_used"]`——citation ID → URL 陣列，缺號以空字串佔位，
+             故降級時取「非空元素數」。
+        兩者皆無（no-data / error / mock item 沒有這些欄位）→ None。
+        """
+        for item in results:
+            schema_obj = item.get('schema_object') or {}
+            total = schema_obj.get('total_sources_analyzed')
+            # bool 是 int 的 subclass，明確排除避免 True → 1
+            if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
+                return total
+
+        for item in results:
+            schema_obj = item.get('schema_object') or {}
+            sources = schema_obj.get('sources_used')
+            if isinstance(sources, list):
+                return sum(1 for url in sources if isinstance(url, str) and url.strip())
+
+        return None
+
     def _generate_final_report(self, results: list, temporal_context: Dict) -> str:
         """
         Generate a final markdown report from research results.
@@ -460,8 +491,18 @@ class DeepResearchHandler(NLWebHandler):
         # Build final report
         report_parts = [
             f"# 深度研究報告：{self.query}",
-            f"\n**分析來源數：** {len(results)}",
         ]
+
+        # 「分析來源數」必須來自 orchestrator 的權威計數，不是回傳 Item 數（見 _count_analyzed_sources）
+        source_count = self._count_analyzed_sources(results)
+        if source_count is None:
+            # no-silent-fail：拿不到權威來源數就不印數字（寧可少一行也不可印錯），但要留 log
+            logger.warning(
+                "[DEEP RESEARCH] 無法取得分析來源數（schema_object 缺 total_sources_analyzed "
+                f"與 sources_used，results={len(results)} 筆）→ 略過「分析來源數」欄位"
+            )
+        else:
+            report_parts.append(f"\n**分析來源數：** {source_count}")
 
         # Add temporal context if applicable
         if temporal_context.get('is_temporal_query'):
@@ -633,7 +674,14 @@ class DeepResearchHandler(NLWebHandler):
 
     def _calculate_confidence(self, results: list) -> str:
         """
-        Calculate confidence level based on research results.
+        取這份報告的信心水準（'High' / 'Medium' / 'Low'）。
+
+        以 Writer/Critic 算出的值為準——`schema_object["confidence"]`
+        （= `final_report.confidence_level`，由 Critic status PASS/WARN/REJECT 映射）。
+
+        ⚠️ 與「分析來源數」同一個 root cause：舊版用 `len(results)` 當「結果數」跑啟發式
+        （>=5 High / >=2 Medium / else Low），但 `run_research()` 恆回單一元素 list，
+        該啟發式永遠落在 'Low'，與實際審查結果無關。
 
         Args:
             results: List of research result items
@@ -641,15 +689,19 @@ class DeepResearchHandler(NLWebHandler):
         Returns:
             Confidence level: 'High', 'Medium', or 'Low'
         """
-        num_results = len(results)
+        for item in results:
+            schema_obj = item.get('schema_object') or {}
+            confidence = schema_obj.get('confidence')
+            if isinstance(confidence, str) and confidence.strip():
+                return confidence.strip()
 
-        # Simple heuristic based on number of results
-        if num_results >= 5:
-            return 'High'
-        elif num_results >= 2:
-            return 'Medium'
-        else:
-            return 'Low'
+        # no-silent-fail：no-data / error / mock item 沒有 confidence 欄位——
+        # 保守回 'Low'（不宣稱高信心），但要留 log 表明這是降級值而非真實評估。
+        logger.warning(
+            "[DEEP RESEARCH] schema_object 無 confidence 欄位"
+            f"（results={len(results)} 筆）→ 降級回報 'Low'"
+        )
+        return 'Low'
 
     async def _check_clarification_needed(self) -> bool:
         """
