@@ -11,9 +11,16 @@
 # 這組**不需要** human_labels（那是 gold set 的事）；只需真實 (query, sources, draft)。
 # 欄位對應 code/python/eval/critic_eval/schema.py:EvalCase
 #
-# 撈法（下一步 runner 落地時實作）：
-#   從 search_sessions 撈 live_research_state / DR research state 裡的
-#   Analyst 草稿與 evidence_pool，去識別化後填入下方。
+# 撈法（老闆 2026-08-12 校正——原註「從 search_sessions 撈 Analyst 草稿」對 DR 不成立）：
+#   ⚠️ DR 的 Analyst「原始草稿」撈不到。DR 管線是 Analyst 產草稿 → Critic 審 →
+#   Writer 改寫，最後只存 Writer 的最終產物；Analyst 草稿是 Writer 的輸入，用完即棄，
+#   從未寫進任何欄位。（LR 有 lr_dialog_snapshot 存中間態，DR 無等價欄位，照 LR 類推會落空。）
+#   DR 的 IterationLogger 曾把完整 Analyst 輸出寫成 JSON，但落在容器內未掛 volume 的路徑，
+#   每次部署即全部消失；此漏洞已修（之後留得住），但過去資料救不回。
+#   ∴ 這批 fixtures 只能靠「重跑」產生，不是撈歷史：
+#     從 DB 撈真實 query（該欄完整乾淨）→ 重跑 DR → 在 Analyst 出口攔截草稿 → 去識別化填入。
+#   注意：重跑用「當下語料庫」，拿到的是「真實 query + 真實 pipeline + 當下語料」，
+#   非當時那一次的重現；對回歸基準（要真實形狀、非歷史考古）足夠。
 
 cases:
   - id: real_0001_PLACEHOLDER

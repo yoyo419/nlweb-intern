@@ -26,6 +26,13 @@ class Source(BaseModel):
 
     id: int = Field(..., description="Citation id, referenced in the draft as [id]")
     text: str = Field(..., description="Source content the draft may cite")
+    # Optional prod-parity fields (boss 2026-08-12 feedback #2): let real re-run
+    # fixtures carry the same 網站/標題/日期 that prod's _format_context_shared renders
+    # into the critic context. Absent (thin synthetic case) → terse「[id] text」;
+    # present → prod-style「[id] site - title (date)」. Additive: id+text still valid.
+    site: str = Field("", description="Source site/publisher (prod: item['site'])")
+    title: str = Field("", description="Source title (prod: item['title'] or ['name'])")
+    date_published: str = Field("", description="ISO date; rendered as (YYYY-MM-DD)")
 
 
 class DefectLabel(BaseModel):

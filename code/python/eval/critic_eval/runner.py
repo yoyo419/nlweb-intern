@@ -33,6 +33,7 @@ import argparse
 import asyncio
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -46,6 +47,11 @@ if str(_CODE_PYTHON) not in sys.path:
 
 from eval.critic_eval.schema import EvalCase, JudgeIssue, JudgeVerdict, Source  # noqa: E402
 from eval.critic_eval.judges import JUDGES  # noqa: E402
+from core.temporal_anchor import (  # noqa: E402
+    TEMPORAL_ANCHOR_RULE,
+    anchor_note,
+    annotate_relative_years,
+)
 
 
 # A judge's dimension -> which critic output field should carry the same finding.
@@ -70,11 +76,61 @@ def load_cases(path: Path) -> List[EvalCase]:
     return TypeAdapter(List[EvalCase]).validate_python(raw["cases"])
 
 
+def _current_time_header() -> str:
+    """Replicate orchestrator._get_current_time_header so the critic sees the SAME
+    「當前時間」block prod feeds it (boss 2026-08-12 feedback #2).
+
+    Without it the critic cannot judge「今天/最近/今年」claims — and news queries are
+    frequently time-sensitive, so the eval would test a different behavior than prod.
+    Uses real now() to match prod (not a pinned time); a run-to-run baseline on
+    time-sensitive cases therefore carries some inherent time drift — acceptable per
+    boss「基準要的是真實形狀而非歷史考古」.
+    """
+    from core.config import CONFIG
+
+    timezone_str = CONFIG.reasoning_params.get("timezone", "Asia/Taipei")
+    try:
+        import pytz
+        current_time = datetime.now(pytz.timezone(timezone_str))
+    except ImportError:
+        current_time = datetime.now()
+    weekday = ["星期一", "星期二", "星期三", "星期四",
+               "星期五", "星期六", "星期日"][current_time.weekday()]
+    return (
+        f"## 當前時間\n"
+        f"{current_time.strftime('%Y-%m-%d %H:%M:%S')} {weekday} ({timezone_str})\n\n"
+        f"當用戶詢問「今天」、「最近」、「現在」等時間相關詞彙時，請參考上述當前時間。\n"
+        f"**注意：上述當前時間只用於理解「使用者問句」的相對時間，"
+        f"不可用來換算「來源內文」的相對時間。**\n"
+        f"{TEMPORAL_ANCHOR_RULE}\n\n"
+        f"## 可用資料來源\n"
+    )
+
+
 def format_context(sources: List[Source]) -> str:
-    """Render sources as the numbered context string the critic reads."""
+    """Render the context string the critic reads — structurally aligned with prod
+    orchestrator._format_context_shared (boss 2026-08-12 feedback #2).
+
+    Layout: a 當前時間 header on top, then per-source「[id] 網站 - 標題 (日期)」headers
+    followed by the source text. Thin fixtures (only id+text, e.g. synthetic gold
+    cases) degrade to the terse「[id] 內容」under the same wrapper.
+    """
+    header = _current_time_header()
     if not sources:
-        return "（無來源）"
-    return "\n".join(f"[{s.id}] {s.text}" for s in sources)
+        return header + "（無來源）"
+    parts = []
+    for s in sources:
+        # thin case: no prod-parity fields → keep terse「[id] 內容」
+        if not (s.site or s.title or s.date_published):
+            parts.append(f"[{s.id}] {s.text}")
+            continue
+        line_head = f"[{s.id}] {s.site or 'Unknown'} - {s.title or 'No title'}"
+        if s.date_published:
+            line_head += f" ({str(s.date_published).split('T')[0]})"
+        line_head += anchor_note(s.date_published)
+        # 發布日期錨定：與 prod 同口徑（prod 在 _format_context_shared 做同一件事）
+        parts.append(f"{line_head}\n{annotate_relative_years(s.text, s.date_published)}")
+    return header + "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +291,7 @@ def score_case(critic: Dict, judges: Dict[str, JudgeVerdict]) -> Dict:
 # calibration view (§3.1): print human vs judge side by side; no auto matching
 # ---------------------------------------------------------------------------
 def print_calibration(case: EvalCase, judges: Dict[str, JudgeVerdict]) -> None:
-    human = [f"[{l.type}] {l.quote}" for l in case.human_labels if l.type != "none"]
+    human = [f"[{lab.type}] {lab.quote}" for lab in case.human_labels if lab.type != "none"]
     is_clean = not human
     print(f"\n── 校準 · {case.id} ──")
     print(f"  人工標註：{human if human else '（乾淨，無缺陷）'}")

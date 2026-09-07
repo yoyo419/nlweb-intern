@@ -17,8 +17,9 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from core.temporal_anchor import TEMPORAL_ANCHOR_RULE
 from eval.critic_eval import runner
-from eval.critic_eval.schema import EvalCase, JudgeIssue, JudgeVerdict
+from eval.critic_eval.schema import EvalCase, JudgeIssue, JudgeVerdict, Source
 
 
 # --- small builders -------------------------------------------------------
@@ -194,12 +195,19 @@ class TestLoadCases(unittest.TestCase):
 
 class TestFormatContextAndEnv(unittest.TestCase):
     def test_format_context_numbered(self):
+        # prod 對齊 (boss 2026-08-12 #2): 前面多了當前時間 header + 「可用資料來源」段，
+        # 薄來源仍維持終端的「[id] 內容」段落。
         from eval.critic_eval.schema import Source
         s = [Source(id=1, text="甲"), Source(id=2, text="乙")]
-        self.assertEqual(runner.format_context(s), "[1] 甲\n[2] 乙")
+        out = runner.format_context(s)
+        self.assertIn("## 當前時間", out)
+        self.assertTrue(out.rstrip().endswith("[1] 甲\n[2] 乙"))
 
     def test_format_context_empty(self):
-        self.assertEqual(runner.format_context([]), "（無來源）")
+        # 無來源仍會有當前時間 header（prod header 永遠非空），本體為「（無來源）」。
+        out = runner.format_context([])
+        self.assertIn("## 當前時間", out)
+        self.assertTrue(out.rstrip().endswith("（無來源）"))
 
     def test_capture_env_mock(self):
         self.assertEqual(runner.capture_env(True), {"mock": True})
@@ -276,6 +284,63 @@ class TestFullMockPipeline(unittest.TestCase):
         scores = asyncio.run(run_all())
         ok = sum(1 for s in scores if s["critic_ok"])
         self.assertEqual(ok, len(cases), f"expected perfect, got {ok}/{len(cases)}")
+
+
+class TestFormatContextProdParity(unittest.TestCase):
+    """機械防線 (boss 2026-08-12 feedback #2): the string fed to the critic must be
+    structurally aligned with prod orchestrator._format_context_shared — specifically
+    it MUST carry the 當前時間 header (else the critic can't judge 今天/最近/今年), and
+    render prod-style 網站 - 標題 (日期) headers when the fixture carries those fields.
+
+    mutation check: delete the header line in runner._current_time_header, or the
+    site/title branch in format_context, and the matching assertion below goes red.
+    """
+
+    def test_current_time_header_present(self):
+        """『當前時間』區塊 + 『可用資料來源』段首必須存在（prod 的第三樣、影響最大）。"""
+        out = runner.format_context([Source(id=1, text="內容")])
+        self.assertIn("## 當前時間", out)
+        self.assertIn("當前時間", out)
+        self.assertIn("## 可用資料來源", out)
+        # 時間提示語，讓 critic 知道怎麼用這個時間
+        self.assertIn("最近", out)
+
+    def test_rich_source_renders_site_title_date(self):
+        """帶 site/title/date 的來源 → 渲染成『[id] 網站 - 標題 (YYYY-MM-DD)』。"""
+        out = runner.format_context([
+            Source(id=1, text="台積電第一季 EPS 8.70 元",
+                   site="經濟日報", title="台積電法說會", date_published="2026-08-10T09:00:00"),
+        ])
+        self.assertIn("[1] 經濟日報 - 台積電法說會 (2026-08-10)", out)
+        self.assertIn("台積電第一季 EPS 8.70 元", out)
+
+    def test_thin_source_degrades_to_terse(self):
+        """只有 id+text 的薄來源 → 維持『[id] 內容』，不硬塞 Unknown/No title。"""
+        out = runner.format_context([Source(id=2, text="純文字來源")])
+        self.assertIn("[2] 純文字來源", out)
+        self.assertNotIn("Unknown", out)
+        self.assertNotIn("No title", out)
+
+    def test_source_relative_year_anchored_to_publication_date(self):
+        """來源內文的「今年」＝該來源發布年（prod _format_context_shared 同口徑）。
+
+        沒有這道錨定，2020 年的來源寫「今年」→ critic 會拿「當前時間」換算成今年，
+        判 grounding 時就對不上真實年份。
+        """
+        out = runner.format_context([
+            Source(id=1, text="今年營收成長 12%", site="經濟日報",
+                   title="法說會", date_published="2020-05-06"),
+        ])
+        self.assertIn("今年（2020年）", out)
+        self.assertIn(TEMPORAL_ANCHOR_RULE, out)
+
+    def test_citation_marker_preserved(self):
+        """[id] 引用標記務必保留——CoV 假引用查核與 grounding 都靠它。"""
+        out = runner.format_context([
+            Source(id=1, text="a"), Source(id=2, text="b"), Source(id=3, text="c"),
+        ])
+        for i in (1, 2, 3):
+            self.assertIn(f"[{i}]", out)
 
 
 if __name__ == "__main__":
