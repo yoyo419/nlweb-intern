@@ -123,6 +123,40 @@
 
 先用最嚴的跑，依假警報再放鬆——判定規則是**可調參數**，先立框架。
 
+### 5.1 已落地的判定（`runner.evaluate_gate`）
+
+單案層在 `score_case`：某維度的評審舉證指控、而 critic 對應欄位（`source_issues` /
+`logical_gaps`）是空的 → 該維度算漏；硬傷維度（grounding / fabrication）漏 = 一票否決。
+**只有非 PASS 的狀態不給分**——因 A 理由 REJECT 的 critic 不能被算成也抓到了它從沒提過的 B。
+
+整組層在 `evaluate_gate`，回三種判定，並對應出口碼讓它擋得住下游：
+
+| 判定 | 出口碼 | 何時 |
+|---|---|---|
+| `PASS` | 0 | 可比，且通過率沒掉、也沒有案例從 OK 變 MISS |
+| `FAIL` | 1 | 可比但退步：通過率跌破容忍值，**或**逐案出現 OK → MISS |
+| `BLOCKED` | 2 | **不可比**：沒有基準、env/flags 不同、`context_format` 不同、考卷不同 |
+
+兩個容易失守的點，各有機械防線（`test_runner_logic.py::TestGateDecision`）：
+
+1. **不可比不得靜靜放行**。不可比就是不可比，既不能算通過也不能算退步，得停下來由人處理。
+   餵給 critic 的 context 形狀（`format_context`）改版也算不可比——所以版本字串
+   `CONTEXT_FORMAT_VERSION` 會戳進 env，由 gate 自動擋，不靠人記得。
+2. **總分持平不代表沒退步**。一案退、一案進會讓通過率持平，所以 gate 一律逐案比對
+   `critic_ok`，出現 OK → MISS 就 FAIL。
+
+容忍值 `--tolerance` 預設 `0.0`（最嚴）；LLM 有非決定性，要放鬆必須是明講的決定。
+
+跑法：
+
+```bash
+cd code/python
+# 存基準
+python -m eval.critic_eval.runner --cases cases/gold_cases.yaml --save baseline.json
+# 當關卡跑（出口碼 0 / 1 / 2）
+python -m eval.critic_eval.runner --cases cases/gold_cases.yaml --compare baseline.json --gate
+```
+
 ---
 
 ## 6. 跑一次多少錢、什麼時機跑（Q6）

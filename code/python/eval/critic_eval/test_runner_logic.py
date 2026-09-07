@@ -343,5 +343,145 @@ class TestFormatContextProdParity(unittest.TestCase):
             self.assertIn(f"[{i}]", out)
 
 
+def _res(case_id, ok):
+    """一筆結果／基準紀錄（gate 只看 id 與 score.critic_ok）。"""
+    return {"id": case_id, "score": {"critic_ok": ok}}
+
+
+class TestGateDecision(unittest.TestCase):
+    """§5 整組層 gate：可比性 → BLOCKED、退步 → FAIL、其餘 PASS。
+
+    機械防線重點在「不可比不得靜靜放行」與「總分持平也要抓逐案退步」，
+    這兩條是 gate 失效最容易發生的地方。
+    mutation 驗法：把 evaluate_gate 的 blockers 判斷或 regressed 判斷拿掉，
+    對應的測試必須轉紅。
+    """
+
+    ENV = {"mock": False, "structured_critique": True, "context_format": "prod-parity-v1"}
+
+    def _base(self, rate, results=None, env=None, cases_file="gold_cases.yaml"):
+        return {"env": env if env is not None else self.ENV, "cases_file": cases_file,
+                "pass_rate": rate, "results": results or []}
+
+    # --- BLOCKED：不可比 ---------------------------------------------------
+    def test_no_baseline_is_blocked_not_pass(self):
+        g = runner.evaluate_gate(self.ENV, "gold_cases.yaml", 1.0, [], None)
+        self.assertEqual(g["verdict"], runner.GATE_BLOCKED)
+        self.assertTrue(g["reasons"])
+
+    def test_env_mismatch_is_blocked(self):
+        other = dict(self.ENV, structured_critique=False)
+        g = runner.evaluate_gate(self.ENV, "gold_cases.yaml", 1.0, [], self._base(1.0, env=other))
+        self.assertEqual(g["verdict"], runner.GATE_BLOCKED)
+        self.assertIn("structured_critique", " ".join(g["reasons"]))
+
+    def test_missing_context_format_in_old_baseline_is_blocked(self):
+        """舊基準沒有 context_format（產生於舊版 format_context）→ 不可比。
+
+        context 形狀變了 critic 看到的東西就變了，分數差不能算退步也不能算持平。
+        """
+        old = {k: v for k, v in self.ENV.items() if k != "context_format"}
+        g = runner.evaluate_gate(self.ENV, "gold_cases.yaml", 1.0, [], self._base(1.0, env=old))
+        self.assertEqual(g["verdict"], runner.GATE_BLOCKED)
+        self.assertIn("context_format", " ".join(g["reasons"]))
+
+    def test_different_cases_file_is_blocked(self):
+        g = runner.evaluate_gate(self.ENV, "gold_extended.yaml", 1.0, [],
+                                 self._base(1.0, cases_file="gold_cases.yaml"))
+        self.assertEqual(g["verdict"], runner.GATE_BLOCKED)
+        self.assertIn("考卷不同", " ".join(g["reasons"]))
+
+    def test_baseline_without_pass_rate_is_blocked(self):
+        base = self._base(1.0)
+        base.pop("pass_rate")
+        g = runner.evaluate_gate(self.ENV, "gold_cases.yaml", 1.0, [], base)
+        self.assertEqual(g["verdict"], runner.GATE_BLOCKED)
+
+    # --- FAIL：退步 --------------------------------------------------------
+    def test_pass_rate_drop_fails(self):
+        g = runner.evaluate_gate(self.ENV, "gold_cases.yaml", 0.60, [_res("a", False)],
+                                 self._base(0.80, [_res("a", True)]))
+        self.assertEqual(g["verdict"], runner.GATE_FAIL)
+        self.assertLess(g["delta"], 0)
+
+    def test_flat_rate_but_case_swap_still_fails(self):
+        """一升一降 → 總通過率持平，但確實有案例從守住變成漏抓，必須 FAIL。
+
+        只看總分的 gate 會在這裡放行，這是它最危險的盲點。
+        """
+        now = [_res("a", False), _res("b", True)]
+        base = self._base(0.50, [_res("a", True), _res("b", False)])
+        g = runner.evaluate_gate(self.ENV, "gold_cases.yaml", 0.50, now, base)
+        self.assertEqual(g["verdict"], runner.GATE_FAIL)
+        self.assertEqual(g["regressed"], ["a"])
+        self.assertEqual(g["improved"], ["b"])
+
+    def test_drop_beyond_tolerance_fails(self):
+        g = runner.evaluate_gate(self.ENV, "gold_cases.yaml", 0.80, [], self._base(1.0),
+                                 tolerance=0.10)
+        self.assertEqual(g["verdict"], runner.GATE_FAIL)
+
+    # --- PASS --------------------------------------------------------------
+    def test_identical_run_passes(self):
+        now = [_res("a", True), _res("b", True)]
+        g = runner.evaluate_gate(self.ENV, "gold_cases.yaml", 1.0, now, self._base(1.0, now))
+        self.assertEqual(g["verdict"], runner.GATE_PASS)
+        self.assertEqual(g["reasons"], [])
+
+    def test_improvement_passes(self):
+        g = runner.evaluate_gate(self.ENV, "gold_cases.yaml", 1.0, [_res("a", True)],
+                                 self._base(0.50, [_res("a", False)]))
+        self.assertEqual(g["verdict"], runner.GATE_PASS)
+        self.assertEqual(g["improved"], ["a"])
+
+    def test_drop_within_tolerance_passes(self):
+        g = runner.evaluate_gate(self.ENV, "gold_cases.yaml", 0.95, [], self._base(1.0),
+                                 tolerance=0.10)
+        self.assertEqual(g["verdict"], runner.GATE_PASS)
+
+    def test_case_only_on_one_side_is_reported_not_judged(self):
+        """基準沒跑過的新案不算退步，但要被點名，避免題目換了卻無聲比。"""
+        g = runner.evaluate_gate(self.ENV, "gold_cases.yaml", 1.0,
+                                 [_res("a", True), _res("new", True)],
+                                 self._base(1.0, [_res("a", True)]))
+        self.assertEqual(g["verdict"], runner.GATE_PASS)
+        self.assertEqual(g["unmatched"], ["new"])
+
+    # --- 出口碼 ------------------------------------------------------------
+    def test_exit_codes_are_distinct_and_nonzero_on_problem(self):
+        self.assertEqual(runner.GATE_EXIT[runner.GATE_PASS], 0)
+        self.assertNotEqual(runner.GATE_EXIT[runner.GATE_FAIL], 0)
+        self.assertNotEqual(runner.GATE_EXIT[runner.GATE_BLOCKED], 0)
+        self.assertNotEqual(runner.GATE_EXIT[runner.GATE_FAIL],
+                            runner.GATE_EXIT[runner.GATE_BLOCKED])
+
+    def test_capture_env_stamps_context_format(self):
+        """context 格式版本必須進 env，gate 才擋得掉跨格式比對（靠機制不靠人記得）。"""
+        env = runner.capture_env(False)
+        self.assertEqual(env.get("context_format"), runner.CONTEXT_FORMAT_VERSION)
+
+
+class TestCompareBaselinePrintsGate(unittest.TestCase):
+    """compare_baseline 只是 evaluate_gate 的列印皮，判定不得另立一套規則。"""
+
+    def test_returns_gate_verdict_and_prints_case_regression(self):
+        import tempfile
+        env = {"mock": True}
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "base.json"
+            p.write_text(json.dumps({"env": env, "cases_file": "c.yaml", "pass_rate": 0.50,
+                                     "results": [_res("a", True), _res("b", False)]}),
+                         encoding="utf-8")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                gate = runner.compare_baseline(p, env, 0.50, "c.yaml",
+                                               [_res("a", False), _res("b", True)])
+            out = buf.getvalue()
+        self.assertEqual(gate["verdict"], runner.GATE_FAIL)
+        self.assertIn("持平", out)          # 總分持平
+        self.assertIn("逐案退步", out)      # 但逐案抓到退步
+        self.assertIn("a", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
