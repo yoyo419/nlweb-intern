@@ -1,0 +1,410 @@
+# 擴充版標準答案組（gold set 的超集）— 26 題，用來校準評審 + 建立臨時 baseline。
+#
+# 與 cases/gold_cases.yaml 同格式、同紀律：
+#   - 每案手工構造，故意塞「一個」已知缺陷（fabrication / fake_citation /
+#     logic_jump），並保留乾淨案例當負例（type: none）。
+#   - 這是**合成校準題**，非真實 session；真實迴歸題庫仍待老闆脫敏供料。
+#   - 跨多領域（半導體/總經/天氣/衛生/體育/能源/政策）避免評審 overfit 單一題材。
+#
+# 欄位對應 code/python/eval/critic_eval/schema.py:EvalCase
+# defect type: fabrication | fake_citation | logic_jump | none
+
+cases:
+  # ========================================================================
+  # 原 gold_cases.yaml 六題（保留，讓單一 baseline 檔涵蓋既有校準面）
+  # ========================================================================
+  - id: gold_clean_tsmc
+    query: "台積電 2024 年第一季財報表現如何？"
+    sources:
+      - id: 1
+        text: "台積電公布 2024 年第一季合併營收為新台幣 5,926 億元，季減 5.3%，年增 16.5%。"
+      - id: 2
+        text: "台積電 2024 年第一季稅後純益為新台幣 2,254 億元，每股盈餘 8.70 元。"
+      - id: 3
+        text: "台積電表示，第一季先進製程（7 奈米及以下）營收占晶圓銷售金額的 65%。"
+    draft: "台積電 2024 年第一季合併營收達新台幣 5,926 億元，年增 16.5%[1]。稅後純益為 2,254 億元，每股盈餘 8.70 元[2]。其中先進製程占晶圓銷售金額的 65%[3]。"
+    human_labels:
+      - type: none
+    expected_critic_verdict: PASS
+    notes: "乾淨正例：每句都有對應來源、引用正確。"
+
+  - id: gold_fabrication_margin
+    query: "台積電 2024 年第一季財報表現如何？"
+    sources:
+      - id: 1
+        text: "台積電公布 2024 年第一季合併營收為新台幣 5,926 億元，季減 5.3%，年增 16.5%。"
+      - id: 2
+        text: "台積電 2024 年第一季稅後純益為新台幣 2,254 億元，每股盈餘 8.70 元。"
+      - id: 3
+        text: "台積電表示，第一季先進製程（7 奈米及以下）營收占晶圓銷售金額的 65%。"
+    draft: "台積電 2024 年第一季合併營收達 5,926 億元，年增 16.5%[1]。此外，第一季毛利率高達 53.1%[1]，顯示獲利能力強勁。"
+    human_labels:
+      - type: fabrication
+        quote: "第一季毛利率高達 53.1%[1]"
+        reason: "任何來源皆未提及毛利率或 53.1% 這個數字，屬憑空捏造。"
+        source_hint: "無任一來源含此內容"
+    expected_critic_verdict: REJECT
+    notes: "編造正例：主要由 fabrication 評審抓到；grounding 亦應抓。"
+
+  - id: gold_fake_citation_eps
+    query: "台積電 2024 年第一季每股盈餘多少？"
+    sources:
+      - id: 1
+        text: "台積電公布 2024 年第一季合併營收為新台幣 5,926 億元，季減 5.3%，年增 16.5%。"
+      - id: 2
+        text: "台積電 2024 年第一季稅後純益為新台幣 2,254 億元，每股盈餘 8.70 元。"
+      - id: 3
+        text: "台積電表示，第一季先進製程（7 奈米及以下）營收占晶圓銷售金額的 65%。"
+    draft: "台積電 2024 年第一季每股盈餘為 8.70 元[3]，表現穩健。"
+    human_labels:
+      - type: fake_citation
+        quote: "每股盈餘為 8.70 元[3]"
+        reason: "引用[3]的內容是先進製程占比 65%，與每股盈餘無關；EPS 8.70 元實際出自來源[2]，屬張冠李戴。"
+        source_hint: "正確應引 [2]"
+    expected_critic_verdict: REJECT
+    notes: "假引用正例：數字本身對，但引用編號掛錯。"
+
+  - id: gold_logic_jump_competitiveness
+    query: "如何評價台積電 2024 年第一季的競爭力？"
+    sources:
+      - id: 1
+        text: "台積電公布 2024 年第一季合併營收為新台幣 5,926 億元，季減 5.3%，年增 16.5%。"
+      - id: 2
+        text: "台積電 2024 年第一季稅後純益為新台幣 2,254 億元，每股盈餘 8.70 元。"
+    draft: "台積電 2024 年第一季合併營收季減 5.3%[1]，因此台積電已經失去市場競爭力。"
+    human_labels:
+      - type: logic_jump
+        quote: "因此台積電已經失去市場競爭力"
+        reason: "單季營收季減 5.3% 無法推得「失去市場競爭力」，中間缺乏環節；且同一來源[1]顯示年增 16.5%，屬選擇性引用後的過度推論。"
+        source_hint: "來源[1]僅提供營收增減數字，未評價競爭力"
+    expected_critic_verdict: REJECT
+    notes: "邏輯跳步正例：前提有根據、引用也對，問題在推論過頭。"
+
+  - id: gold_subtle_overstate_high
+    query: "台積電 2024 年第一季獲利如何？"
+    sources:
+      - id: 1
+        text: "台積電公布 2024 年第一季合併營收為新台幣 5,926 億元，季減 5.3%，年增 16.5%。"
+      - id: 2
+        text: "台積電 2024 年第一季稅後純益為新台幣 2,254 億元，每股盈餘 8.70 元。"
+    draft: "台積電 2024 年第一季營收 5,926 億元[1]、稅後純益 2,254 億元[2]，創下歷史新高。"
+    human_labels:
+      - type: fabrication
+        quote: "創下歷史新高"
+        reason: "數字本身有根據，但「創下歷史新高」是來源未提供的附加評斷，屬輕微無根據誇大。"
+        source_hint: "來源未提及是否為歷史新高"
+    expected_critic_verdict: WARN
+    notes: "細微正例：大部分有根據、只有一個誇大修飾。"
+
+  - id: gold_clean_weather_thin
+    query: "這個週末北台灣天氣如何？"
+    sources:
+      - id: 1
+        text: "中央氣象署表示，本週末北台灣有短暫陣雨，氣溫約 22 至 27 度。"
+    draft: "根據中央氣象署，本週末北台灣有短暫陣雨，氣溫約在 22 至 27 度之間[1]。"
+    human_labels:
+      - type: none
+    expected_critic_verdict: PASS
+    notes: "乾淨但資料少的負例：草稿保守、沒超出來源。"
+
+  # ========================================================================
+  # 新增乾淨負例（測假警報控制）
+  # ========================================================================
+  - id: ext_clean_flu_vaccine
+    query: "今年流感疫苗何時開打？"
+    sources:
+      - id: 1
+        text: "疾管署宣布，公費流感疫苗自 10 月 1 日起分階段開打，第一階段為醫護與 65 歲以上長者。"
+    draft: "根據疾管署，公費流感疫苗自 10 月 1 日起分階段開打，首階段對象為醫護人員與 65 歲以上長者[1]。"
+    human_labels:
+      - type: none
+    expected_critic_verdict: PASS
+    notes: "乾淨：完全照來源，未加碼。"
+
+  - id: ext_clean_baseball_score
+    query: "中信兄弟昨晚比賽結果？"
+    sources:
+      - id: 1
+        text: "中華職棒昨晚中信兄弟以 5 比 3 擊敗樂天桃猿，終結對戰三連敗。"
+    draft: "中信兄弟昨晚以 5 比 3 擊敗樂天桃猿，中止對戰三連敗[1]。"
+    human_labels:
+      - type: none
+    expected_critic_verdict: PASS
+    notes: "乾淨：比分與敘述皆與來源一致。"
+
+  - id: ext_clean_budget_policy
+    query: "明年度總預算歲出規模多少？"
+    sources:
+      - id: 1
+        text: "行政院通過明年度中央政府總預算案，歲出規模為新台幣 2.9 兆元，較今年增加 3.1%。"
+    draft: "行政院通過的明年度中央政府總預算案，歲出規模為 2.9 兆元，較今年增加 3.1%[1]。"
+    human_labels:
+      - type: none
+    expected_critic_verdict: PASS
+    notes: "乾淨：金額與增幅照抄。"
+
+  - id: ext_clean_solar_capacity
+    query: "去年太陽光電累積裝置容量多少？"
+    sources:
+      - id: 1
+        text: "能源署統計，截至去年底太陽光電累積裝置容量達 12.4 GW，年增約 2.1 GW。"
+    draft: "根據能源署，截至去年底太陽光電累積裝置容量為 12.4 GW，該年新增約 2.1 GW[1]。"
+    human_labels:
+      - type: none
+    expected_critic_verdict: PASS
+    notes: "乾淨：容量數字照來源。"
+
+  # ========================================================================
+  # 新增 fabrication（憑空編造，任何來源都沒有）
+  # ========================================================================
+  - id: ext_fab_unemployment
+    query: "上月失業率是多少？"
+    sources:
+      - id: 1
+        text: "主計總處公布上月就業人數為 1,153 萬人，較前月增加 8 千人。"
+      - id: 2
+        text: "主計總處指出，上月非勞動力人口為 815 萬人。"
+    draft: "主計總處公布上月就業人數 1,153 萬人[1]；同期失業率降至 3.28%[2]。"
+    human_labels:
+      - type: fabrication
+        quote: "失業率降至 3.28%[2]"
+        reason: "兩則來源皆未提供失業率數字，3.28% 屬憑空捏造。"
+        source_hint: "無任一來源含失業率"
+    expected_critic_verdict: REJECT
+    notes: "編造：數字在任何來源都不存在。"
+
+  - id: ext_fab_official_quote
+    query: "央行對這次升息怎麼說？"
+    sources:
+      - id: 1
+        text: "中央銀行理事會決議調升政策利率半碼，重貼現率升至 2.0%。"
+      - id: 2
+        text: "央行表示，本次調整主要考量通膨預期與國際情勢。"
+    draft: "央行理事會升息半碼至 2.0%[1]，總裁並強調「年底前不排除再升兩碼」[2]。"
+    human_labels:
+      - type: fabrication
+        quote: "總裁並強調「年底前不排除再升兩碼」[2]"
+        reason: "來源[2]僅提及考量通膨與國際情勢，並無此引述；該句話屬捏造的直接引語。"
+        source_hint: "來源[2]無此發言"
+    expected_critic_verdict: REJECT
+    notes: "編造：捏造官員直接引語。"
+
+  - id: ext_fab_market_share
+    query: "這家電動車廠在國內市占如何？"
+    sources:
+      - id: 1
+        text: "該電動車廠上季在台掛牌數為 4,200 輛，較去年同期成長。"
+    draft: "該電動車廠上季在台掛牌 4,200 輛[1]，市占率已達全國電動車市場的 38%[1]。"
+    human_labels:
+      - type: fabrication
+        quote: "市占率已達全國電動車市場的 38%[1]"
+        reason: "來源[1]只有掛牌輛數，沒有市占率，也沒有全市場總量可推算；38% 屬編造。"
+        source_hint: "來源[1]無市占資料"
+    expected_critic_verdict: REJECT
+    notes: "編造：無母體可推的市占率。"
+
+  - id: ext_fab_casualties
+    query: "這場地震的傷亡情況？"
+    sources:
+      - id: 1
+        text: "氣象署測得本次地震規模 6.0，震央位於花蓮外海，最大震度 5 弱。"
+      - id: 2
+        text: "消防署表示，地震後已陸續接獲民眾受困通報，正派員搶救。"
+    draft: "本次地震規模 6.0，最大震度 5 弱[1]；初步統計造成 12 人死亡、45 人受傷[2]。"
+    human_labels:
+      - type: fabrication
+        quote: "初步統計造成 12 人死亡、45 人受傷[2]"
+        reason: "來源[2]僅提及有受困通報、正在搶救，未提供任何死傷數字；12 死 45 傷屬捏造。"
+        source_hint: "來源[2]無傷亡統計"
+    expected_critic_verdict: REJECT
+    notes: "編造：災難傷亡數字無來源。"
+
+  - id: ext_fab_growth_rate
+    query: "這家連鎖餐飲去年營收表現？"
+    sources:
+      - id: 1
+        text: "該連鎖餐飲集團去年全年營收為新台幣 68 億元。"
+    draft: "該集團去年營收 68 億元[1]，年增率高達 24%[1]，寫下近年新高。"
+    human_labels:
+      - type: fabrication
+        quote: "年增率高達 24%[1]"
+        reason: "來源[1]只有去年營收金額，沒有前年基數也沒有年增率；24% 屬編造。"
+        source_hint: "來源[1]無年增率或前期基數"
+    expected_critic_verdict: REJECT
+    notes: "編造：無基期卻給出年增率。"
+
+  # ========================================================================
+  # 新增 fake_citation（數字正確，但引用編號掛錯 — 對照剛修的 CoV bug）
+  # ========================================================================
+  - id: ext_fakecite_gdp
+    query: "去年台灣經濟成長率多少？"
+    sources:
+      - id: 1
+        text: "主計總處公布去年經濟成長率（GDP 年增率）為 1.28%。"
+      - id: 2
+        text: "主計總處表示，去年全年 CPI 年增率為 2.49%。"
+    draft: "根據主計總處，去年經濟成長率為 1.28%[2]。"
+    human_labels:
+      - type: fake_citation
+        quote: "去年經濟成長率為 1.28%[2]"
+        reason: "1.28% 的經濟成長率實際出自來源[1]；來源[2]講的是 CPI 2.49%，與成長率無關，引用編號掛錯。"
+        source_hint: "正確應引 [1]"
+    expected_critic_verdict: REJECT
+    notes: "假引用：GDP 數字對，但標成 CPI 那條來源。"
+
+  - id: ext_fakecite_population
+    query: "全國人口數目前多少？"
+    sources:
+      - id: 1
+        text: "內政部統計，全國戶籍登記戶數為 940 萬戶。"
+      - id: 2
+        text: "內政部統計，全國人口數為 2,334 萬人，較上月減少。"
+    draft: "根據內政部，全國人口數為 2,334 萬人[1]。"
+    human_labels:
+      - type: fake_citation
+        quote: "全國人口數為 2,334 萬人[1]"
+        reason: "人口數 2,334 萬人出自來源[2]；來源[1]講的是戶數 940 萬戶，引用編號掛錯。"
+        source_hint: "正確應引 [2]"
+    expected_critic_verdict: REJECT
+    notes: "假引用：人口數對，但標成戶數那條。"
+
+  - id: ext_fakecite_temp
+    query: "昨天台北最高溫多少？"
+    sources:
+      - id: 1
+        text: "氣象署觀測，昨日台北測站最高溫達 36.1 度，創入夏新高。"
+      - id: 2
+        text: "氣象署表示，昨日南部地區有午後雷陣雨。"
+      - id: 3
+        text: "氣象署提醒，本週紫外線指數多為過量級。"
+    draft: "氣象署觀測，昨日台北最高溫達 36.1 度[3]。"
+    human_labels:
+      - type: fake_citation
+        quote: "昨日台北最高溫達 36.1 度[3]"
+        reason: "36.1 度出自來源[1]；來源[3]講的是紫外線指數，與氣溫無關，引用編號掛錯。"
+        source_hint: "正確應引 [1]"
+    expected_critic_verdict: REJECT
+    notes: "假引用：氣溫對，但標成紫外線那條。"
+
+  - id: ext_fakecite_stock_price
+    query: "這檔個股昨天收盤價多少？"
+    sources:
+      - id: 1
+        text: "該檔個股昨日成交量為 3.2 萬張。"
+      - id: 2
+        text: "該檔個股昨日收盤價為 512 元，上漲 1.8%。"
+      - id: 3
+        text: "該公司預計下月召開法說會。"
+    draft: "該檔個股昨日收盤價為 512 元[3]。"
+    human_labels:
+      - type: fake_citation
+        quote: "昨日收盤價為 512 元[3]"
+        reason: "收盤價 512 元出自來源[2]；來源[3]講的是法說會時程，與股價無關，引用編號掛錯。"
+        source_hint: "正確應引 [2]"
+    expected_critic_verdict: REJECT
+    notes: "假引用：股價對，但標成法說會那條。"
+
+  - id: ext_fakecite_event_date
+    query: "這場展覽哪天開幕？"
+    sources:
+      - id: 1
+        text: "主辦單位宣布，該國際書展將於 2 月 6 日開幕，展期九天。"
+      - id: 2
+        text: "主辦單位表示，今年參展國家數較去年增加。"
+    draft: "主辦單位宣布，該國際書展將於 2 月 6 日開幕[2]。"
+    human_labels:
+      - type: fake_citation
+        quote: "將於 2 月 6 日開幕[2]"
+        reason: "開幕日期 2 月 6 日出自來源[1]；來源[2]講的是參展國家數，與日期無關，引用編號掛錯。"
+        source_hint: "正確應引 [1]"
+    expected_critic_verdict: REJECT
+    notes: "假引用：日期對，但標成參展國數那條。"
+
+  # ========================================================================
+  # 新增 logic_jump（推論過頭 / 以偏概全 / 相關當因果）
+  # ========================================================================
+  - id: ext_logic_ceo_resign
+    query: "如何評價這家公司上季表現？"
+    sources:
+      - id: 1
+        text: "該公司上季營收季減 4%，管理層表示受季節性因素影響。"
+    draft: "該公司上季營收季減 4%[1]，因此執行長顯然應該立即下台。"
+    human_labels:
+      - type: logic_jump
+        quote: "因此執行長顯然應該立即下台"
+        reason: "單季營收季減 4%（且來源說是季節性因素）無法推得「執行長應下台」，中間缺乏環節。"
+        source_hint: "來源[1]僅述營收變動與季節性因素"
+    expected_critic_verdict: REJECT
+    notes: "邏輯跳步：小前提推到極端結論。"
+
+  - id: ext_logic_poll_overgen
+    query: "民眾對這項政策的看法如何？"
+    sources:
+      - id: 1
+        text: "某網路平台一份 500 人的問卷顯示，約 55% 受訪者支持該政策。"
+    draft: "一份問卷顯示 55% 受訪者支持該政策[1]，可見全體國民多數都贊成這項政策。"
+    human_labels:
+      - type: logic_jump
+        quote: "可見全體國民多數都贊成這項政策"
+        reason: "單一 500 人網路問卷不能代表全體國民；從樣本 55% 推到「全體國民多數贊成」屬以偏概全。"
+        source_hint: "來源[1]為 500 人網路樣本"
+    expected_critic_verdict: REJECT
+    notes: "邏輯跳步：小樣本外推到母體。"
+
+  - id: ext_logic_corr_cause
+    query: "冰品銷量和什麼有關？"
+    sources:
+      - id: 1
+        text: "統計顯示，夏季冰品銷量上升的月份，戲水意外通報件數也同步增加。"
+    draft: "資料顯示冰品銷量與戲水意外同步上升[1]，因此吃冰會導致戲水意外增加。"
+    human_labels:
+      - type: logic_jump
+        quote: "因此吃冰會導致戲水意外增加"
+        reason: "兩者同步上升是相關（都受夏季高溫影響），不代表吃冰「導致」戲水意外，屬把相關當因果。"
+        source_hint: "來源[1]僅述兩者同步，未指因果"
+    expected_critic_verdict: REJECT
+    notes: "邏輯跳步：相關誤當因果。"
+
+  - id: ext_logic_single_match
+    query: "怎麼評價這支球隊的實力？"
+    sources:
+      - id: 1
+        text: "該隊在昨日友誼賽以 2 比 1 擊敗來訪的甲組勁旅。"
+    draft: "該隊昨天以 2 比 1 贏了甲組勁旅[1]，堪稱目前世界上最強的球隊。"
+    human_labels:
+      - type: logic_jump
+        quote: "堪稱目前世界上最強的球隊"
+        reason: "單場友誼賽獲勝無法推得「世界最強」，中間缺乏跨隊、跨賽事的比較依據。"
+        source_hint: "來源[1]僅一場友誼賽結果"
+    expected_critic_verdict: REJECT
+    notes: "邏輯跳步：單場戰績推到最高級結論。"
+
+  - id: ext_logic_extrapolate
+    query: "這家新創的成長前景如何？"
+    sources:
+      - id: 1
+        text: "該新創上季用戶數較前季成長 20%。"
+    draft: "該新創上季用戶成長 20%[1]，照這速度未來十年必將主宰整個產業。"
+    human_labels:
+      - type: logic_jump
+        quote: "照這速度未來十年必將主宰整個產業"
+        reason: "單季 20% 成長無法線性外推到「十年主宰產業」，忽略市場飽和、競爭等變因，屬過度外推。"
+        source_hint: "來源[1]僅單季成長率"
+    expected_critic_verdict: REJECT
+    notes: "邏輯跳步：單季成長線性外推到十年。"
+
+  - id: ext_logic_partial_metric
+    query: "目前經濟情勢如何？"
+    sources:
+      - id: 1
+        text: "上月出口金額年增 6%，為連續第二個月正成長。"
+      - id: 2
+        text: "同月消費者信心指數較前月下滑，民間消費動能偏弱。"
+    draft: "上月出口年增 6%[1]，可見整體經濟已全面繁榮。"
+    human_labels:
+      - type: logic_jump
+        quote: "可見整體經濟已全面繁榮"
+        reason: "只憑出口單一指標推「整體經濟全面繁榮」，且忽略來源[2]消費信心下滑的反向訊號，屬選擇性引用後的過度推論。"
+        source_hint: "來源[2]顯示消費動能偏弱"
+    expected_critic_verdict: REJECT
+    notes: "邏輯跳步：單一正面指標推全面結論、忽略反例。"
