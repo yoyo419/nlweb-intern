@@ -223,6 +223,12 @@ def _mock_critic(case: EvalCase) -> Dict:
     }
 
 
+# 校準模式（judges-only）不需要 critic：評審是拿人工標註對，不是拿 critic 對。
+# 每案省下一次高階 LLM 呼叫（也是 2026-08-11 那輪校準實際的跑法）。
+_JUDGES_ONLY_CRITIC = {"status": None, "critique": "", "suggestions": [],
+                       "source_issues": [], "logical_gaps": [], "mode_compliance": ""}
+
+
 # ---------------------------------------------------------------------------
 # running the judges
 # ---------------------------------------------------------------------------
@@ -441,10 +447,17 @@ async def main_async(args) -> int:
 
     results, ok_count = [], 0
     for case in cases:
-        critic = await run_critic(case, args.mock)
+        critic = dict(_JUDGES_ONLY_CRITIC) if args.judges_only else await run_critic(case, args.mock)
         # calibration (Q3) judges the draft alone; leave critic_verdict None
-        cv = None if args.calibrate else critic.get("status")
+        cv = None if (args.calibrate or args.judges_only) else critic.get("status")
         judges = await run_judges(case, args.mock, cv)
+        if args.judges_only:
+            # 沒跑 critic 就沒有「critic 守住沒」這件事——不計分、不假裝有分數
+            results.append({"id": case.id, "critic": None,
+                            "judges": {d: v.model_dump() for d, v in judges.items()},
+                            "score": None})
+            print_calibration(case, judges)
+            continue
         sc = score_case(critic, judges)
         ok_count += int(sc["critic_ok"])
         results.append({"id": case.id, "critic": critic,
@@ -456,10 +469,15 @@ async def main_async(args) -> int:
         if args.calibrate:
             print_calibration(case, judges)
 
-    pass_rate = ok_count / len(cases) if cases else 0.0
-    print(f"\n通過率（critic 守住 / 全部）：{ok_count}/{len(cases)} = {pass_rate:.0%}")
+    if args.judges_only:
+        pass_rate = None
+        print(f"\n（judges-only 校準模式：未跑 critic，不計通過率；{len(cases)} 案 × "
+              f"{len(JUDGES)} 評審）")
+    else:
+        pass_rate = ok_count / len(cases) if cases else 0.0
+        print(f"\n通過率（critic 守住 / 全部）：{ok_count}/{len(cases)} = {pass_rate:.0%}")
 
-    payload = {"env": env, "cases_file": cases_path.name,
+    payload = {"env": env, "cases_file": cases_path.name, "judges_only": args.judges_only,
                "pass_rate": pass_rate, "results": results}
     if args.save:
         Path(args.save).write_text(json.dumps(payload, ensure_ascii=False, indent=2),
@@ -486,6 +504,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description="critic 自動評審 runner")
     p.add_argument("--cases", default="cases/gold_cases.yaml", help="case YAML（相對本檔目錄或絕對路徑）")
     p.add_argument("--mock", action="store_true", help="免費模式：不呼叫 LLM，從人工標註推導示範輸出")
+    p.add_argument("--judges-only", action="store_true",
+                   help="校準用：不跑 critic，只跑三評審（省每案一次高階呼叫）；不計通過率")
     p.add_argument("--calibrate", action="store_true",
                    help="校準模式：評審只看草稿（不餵 critic 判定）+ 印人工 vs 評審並排")
     p.add_argument("--save", help="把本次結果（含 env/flags）存成基準 JSON")
@@ -494,7 +514,10 @@ def main() -> None:
                    help="gate 模式：依比對結果回出口碼（0=PASS、1=退步、2=不可比），給 CI / pre-merge 用")
     p.add_argument("--tolerance", type=float, default=0.0,
                    help="gate 容忍的通過率降幅（0.05=允許排0.05）；預設 0（最嚴）")
-    sys.exit(asyncio.run(main_async(p.parse_args())))
+    args = p.parse_args()
+    if args.judges_only and (args.compare or args.gate):
+        p.error("--judges-only 沒有通過率可比，不能同時用 --compare / --gate")
+    sys.exit(asyncio.run(main_async(args)))
 
 
 if __name__ == "__main__":

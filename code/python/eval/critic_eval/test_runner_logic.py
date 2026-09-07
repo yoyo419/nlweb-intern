@@ -14,6 +14,7 @@ Design references: docs/specs/critic-eval-plan.md §5 (pass/fail rule),
 import io
 import json
 import unittest
+import contextlib
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -284,6 +285,40 @@ class TestFullMockPipeline(unittest.TestCase):
         scores = asyncio.run(run_all())
         ok = sum(1 for s in scores if s["critic_ok"])
         self.assertEqual(ok, len(cases), f"expected perfect, got {ok}/{len(cases)}")
+
+
+class TestJudgesOnlyMode(unittest.TestCase):
+    """校準模式不跑 critic：省每案一次高階呼叫，但不得因此產生假的分數。"""
+
+    def test_placeholder_critic_credits_nothing(self):
+        """佔位 critic 的欄位必須全空——否則 judges-only 會憑空給 critic 分數。"""
+        ph = runner._JUDGES_ONLY_CRITIC
+        self.assertIsNone(ph["status"])
+        self.assertEqual(ph["source_issues"], [])
+        self.assertEqual(ph["logical_gaps"], [])
+        # 用它去算分，任何評審指控都算漏抓（不會假裝守住）
+        judges = {"grounding": JudgeVerdict(dimension="grounding", found_issue=True,
+                                            issues=[JudgeIssue(quote="q", reason="r",
+                                                               evidence_check="e")]),
+                  "fabrication": JudgeVerdict(dimension="fabrication", found_issue=False),
+                  "logic": JudgeVerdict(dimension="logic", found_issue=False)}
+        sc = runner.score_case(dict(ph), judges)
+        self.assertFalse(sc["critic_ok"])
+
+    def test_judges_only_rejects_gate_and_compare(self):
+        """沒有通過率就沒有可比的東西——不可讓 gate 拿 judges-only 的跑法當基準。"""
+        import sys as _sys
+        for extra in (["--gate"], ["--compare", "b.json"]):
+            argv = ["runner", "--judges-only"] + extra
+            old = _sys.argv
+            _sys.argv = argv
+            try:
+                with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        runner.main()
+                self.assertNotEqual(cm.exception.code, 0)
+            finally:
+                _sys.argv = old
 
 
 class TestFormatContextProdParity(unittest.TestCase):

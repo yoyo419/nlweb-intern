@@ -76,8 +76,29 @@
 
 ```bash
 cd code/python
-# 內建 --calibrate：評審非錨定（critic_verdict=None），印逐案人工 vs 評審並排
-../../venv/Scripts/python.exe -m eval.critic_eval.runner --cases cases/gold_cases.yaml --calibrate
+# judges-only：只跑三評審、非錨定（critic_verdict=None），不跑 critic
+# 每案省一次高階呼叫；印逐案「人工標註 vs 評審實報」並排，由人判定是否同一個錯
+../../venv/Scripts/python.exe -m eval.critic_eval.runner --cases cases/gold_cases.yaml --judges-only
 ```
 
-> 註：`--calibrate` 亦會實跑 critic（額外成本），但評審在此模式為非錨定，逐案比對與本報告一致；一致率由人對照人工標註判定（§3.1）。
+> `--calibrate` 是同樣的非錨定並排，但**會一併實跑 critic**（多一次高階呼叫／案）。
+> 只驗評審跟人一不一致時用 `--judges-only` 就夠，也是本報告 6 題那輪的跑法。
+
+## 9. 26 題擴充校準 —— 待跑（卡在 API 額度）
+
+`cases/gold_extended.yaml`（26 題，含原 6 題；6 乾淨 / 7 fabrication / 6 fake_citation
+/ 7 logic_jump，跨半導體·總經·天氣·衛生·體育·能源·政策）已備妥，跑法：
+
+```bash
+cd code/python
+../../venv/Scripts/python.exe -m eval.critic_eval.runner --cases cases/gold_extended.yaml --judges-only --save calib_ext26.json
+```
+
+- 規模：26 案 × 3 評審 = **78 次**高階呼叫（不跑 critic）。
+- **2026-09-08 實際嘗試過，第一案即中止**：OpenAI 回 429
+  `insufficient_quota / credit_balance_exhausted`（帳戶餘額用盡），未產生任何結果，
+  也未計費。**待儲值後重跑**即可完成；程式面沒有其他阻礙。
+- 要驗的是：6 題那輪的 0/2、4/4 是不是只在半導體財報題材成立（評審 overfit 題材）。
+  特別留意兩題邊界案——`ext_logic_single_match`（「堪稱世界最強球隊」）與
+  `ext_logic_partial_metric`（「可見整體經濟已全面繁榮」）——它們沒有「因此／所以」
+  那麼明顯的推論詞，正好測 logic 與 grounding 的守備範圍界線切在哪。
