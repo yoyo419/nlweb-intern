@@ -49,7 +49,9 @@ from reasoning.citation_stats import (  # noqa: E402
 )
 from reasoning.prompts.prose_discipline import (  # noqa: E402
     DEFAULT_REPORT_SHAPE,
+    DEFAULT_SECTION_CHAR_CAP,
     lint_prose,
+    measure_section_chars,
     strip_duplicate_title,
 )
 from reasoning.prompts.writer import WriterPromptBuilder  # noqa: E402
@@ -339,6 +341,14 @@ async def main() -> int:
 
     total_quotes = sum(len(s.get("citation_quotes") or {}) for s in sections)
     print(f"逐字引句：{total_quotes} 個來源附上可跳轉的原文片段（全部通過逐字校驗）")
+
+    # 篇幅：CEO 8/29 嫌 demo「超級長」，每次跑都印出來比
+    print(f"\n各章字數（預設上限 {DEFAULT_SECTION_CHAR_CAP}，不含引用標記與排版符號）：")
+    for s in sections:
+        n = measure_section_chars(s["content"])
+        flag = "  ← 超過" if n > DEFAULT_SECTION_CHAR_CAP else ""
+        print(f"  第 {s['section_index'] + 1} 章 {n} 字{flag}")
+    print(f"  合計 {sum(measure_section_chars(s['content']) for s in sections)} 字")
 
     # 行文 lint：prompt 擋不住的在這裡現形，下一輪就知道要調哪條規則
     hits = lint_prose("\n".join(s["content"] for s in sections))

@@ -30,7 +30,9 @@ from reasoning.prompts.prose_discipline import (
     ALL_BANNED_WORDS,
     BANNED_WORD_CATEGORIES,
     DEFAULT_REPORT_SHAPE,
+    DEFAULT_SECTION_CHAR_CAP,
     build_shape_block,
+    measure_section_chars,
     lint_prose,
     is_known_report_shape,
     strip_duplicate_title,
@@ -359,3 +361,44 @@ class TestSectionContentNormalization:
     def test_news_shape_requires_markdown_subheadings(self):
         block = build_shape_block("news_inverted_pyramid")
         assert "###" in block, "小標寫成裸文字行，匯出後整章沒有落點"
+
+
+def _outline(target=0):
+    from reasoning.schemas_live import BookOutline, ChapterPlan
+    return BookOutline(
+        chapters=[
+            ChapterPlan(chapter_index=0, title="一", brief="b", target_word_count=target, role="intro"),
+            ChapterPlan(chapter_index=1, title="二", brief="b", target_word_count=target, role="body"),
+        ],
+        overall_arc="arc",
+    )
+
+
+@pytest.mark.unit
+class TestSectionLength:
+    """CEO 8/29 看 replay 成品：「超級長」。沒指定字數時要有上限；有指定時不打架。"""
+
+    def test_default_cap_when_no_word_target(self):
+        prompt = _section_prompt()
+        assert "## 篇幅" in prompt
+        assert f"{DEFAULT_SECTION_CHAR_CAP} 字為上限" in prompt
+
+    def test_cap_is_not_a_target_to_fill(self):
+        assert "上限不是要湊滿的目標" in _section_prompt()
+
+    def test_no_default_cap_when_outline_sets_word_target(self):
+        prompt = _section_prompt(book_outline=_outline(2500), current_chapter_index=0)
+        assert "## 篇幅" not in prompt
+        assert "本章目標字數" in prompt
+
+    def test_default_cap_when_outline_has_no_word_target(self):
+        prompt = _section_prompt(book_outline=_outline(0), current_chapter_index=1)
+        assert "## 篇幅" in prompt
+
+    def test_no_default_cap_on_revision(self):
+        prompt = _section_prompt(revise_instruction="擴寫第二段", prior_section_content="舊稿")
+        assert "## 篇幅" not in prompt
+
+    def test_measure_ignores_cite_marks_layout_and_whitespace(self):
+        assert measure_section_chars("### 小標\n\n環團聲明{cite:3}[4]。 ") == len("小標環團聲明。")
+
