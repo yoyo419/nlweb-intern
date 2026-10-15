@@ -28,10 +28,7 @@ from reasoning.citation_stats import (
 )
 from reasoning.prompts.prose_discipline import (
     ALL_BANNED_WORDS,
-    BANNED_FAKE_CONDITIONALS,
-    BANNED_HEDGE_WORDS,
-    BANNED_NAVIGATION_WORDS,
-    BANNED_VAGUE_QUANTIFIERS,
+    BANNED_WORD_CATEGORIES,
     DEFAULT_REPORT_SHAPE,
     build_shape_block,
     lint_prose,
@@ -80,17 +77,14 @@ class TestProseDisciplineInPrompt:
 
     def test_lr_prompt_carries_each_banned_category_heading(self):
         prompt = _section_prompt()
-        for heading in ("軟墊詞", "導覽與總結句", "假條件句", "模糊量詞"):
+        for heading in (
+            "軟墊詞", "導覽與總結句", "假條件句", "模糊量詞",
+            "稻草人句型", "替讀者數數", "無主詞斷言", "替讀者下定義",
+        ):
             assert heading in prompt, f"缺分類標頭：{heading}"
 
     def test_banned_categories_are_disjoint_and_nonempty(self):
-        cats = [
-            BANNED_HEDGE_WORDS,
-            BANNED_NAVIGATION_WORDS,
-            BANNED_FAKE_CONDITIONALS,
-            BANNED_VAGUE_QUANTIFIERS,
-        ]
-        for c in cats:
+        for c in BANNED_WORD_CATEGORIES:
             assert c, "禁用詞分類不可為空"
         assert len(ALL_BANNED_WORDS) == len(set(ALL_BANNED_WORDS)), "禁用詞重複"
 
