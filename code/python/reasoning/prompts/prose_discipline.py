@@ -21,30 +21,66 @@ from typing import Dict, List
 BANNED_HEDGE_WORDS: List[str] = [
     "其實", "某種程度上", "值得注意的是", "坦白說", "不得不說",
     "眾所周知", "不言而喻", "無庸置疑",
+    "事實上", "基本上", "值得一提的是", "毋庸置疑",
 ]
 
-# 導覽句 / 碎形摘要 / 標示結論：讀者看得到自己在哪，不需要被預告與總結
+# 導覽句 / 碎形摘要 / 標示結論：讀者看得到自己在哪，不需要被預告與總結。
+# 「如前所述」「前文提到」一併列入：回頭指前文＝把講過的事再講一次。
 BANNED_NAVIGATION_WORDS: List[str] = [
     "總結來說", "綜上所述", "綜合以上", "講到最後", "接下來將說明",
     "以下將探討", "本節將介紹", "首先我們來看",
+    "總而言之", "簡而言之", "本章將", "如前所述", "如上所述", "前文提到",
 ]
 
 # 假條件句：沒有排除任何可能性
 BANNED_FAKE_CONDITIONALS: List[str] = [
     "取決於", "視情況而定", "依需求不同", "因人而異",
+    "因地制宜", "視個案而定",
 ]
 
 # 模糊量詞：拿來假裝有數字。證據沒有數字就誠實說沒有
 BANNED_VAGUE_QUANTIFIERS: List[str] = [
     "相當數量", "為數不少", "數量龐大", "面積廣大", "不在少數",
+    "大幅提升", "大幅增加", "顯著提升", "與日俱增",
 ]
 
-ALL_BANNED_WORDS: List[str] = (
-    BANNED_HEDGE_WORDS
-    + BANNED_NAVIGATION_WORDS
-    + BANNED_FAKE_CONDITIONALS
-    + BANNED_VAGUE_QUANTIFIERS
-)
+# 以下四類來自 CEO 中文寫作規格（taiwan-news-ai-search
+# memory/reference_chinese_writing_spec.md）的「機械層」掃描項。
+
+# 稻草人句型：警告讀者別做一件沒人打算做錯的事。要寫的是這件事的用途
+BANNED_STRAWMAN: List[str] = [
+    "不這樣做", "若忽略", "一旦忽略", "若忽視", "少了這一步",
+]
+
+# 替讀者數數：預告「有幾點」，數量本身不是資訊時只是多一句
+BANNED_COUNTING_FOR_READER: List[str] = [
+    "以下幾點", "以下幾個", "有以下", "下列幾", "幾個面向",
+    "三大面向", "兩大面向", "可分為兩", "可分為三",
+]
+
+# 無主詞斷言：說法沒有掛信源。誰說的就寫誰，找不到人就是證據不足
+BANNED_SUBJECTLESS_CLAIMS: List[str] = [
+    "一般認為", "普遍認為", "多數人認為", "有人認為", "有觀點認為",
+    "有專家指出", "有學者指出", "外界普遍", "各界看法不一", "據了解", "據悉",
+]
+
+# 替讀者的專業下定義：收攏語氣，替讀者決定他的工作長什麼樣
+BANNED_PRESUMING_READER: List[str] = [
+    "不外乎", "就那幾類", "大家都知道", "眾所皆知",
+]
+
+BANNED_WORD_CATEGORIES: List[List[str]] = [
+    BANNED_HEDGE_WORDS,
+    BANNED_NAVIGATION_WORDS,
+    BANNED_FAKE_CONDITIONALS,
+    BANNED_VAGUE_QUANTIFIERS,
+    BANNED_STRAWMAN,
+    BANNED_COUNTING_FOR_READER,
+    BANNED_SUBJECTLESS_CLAIMS,
+    BANNED_PRESUMING_READER,
+]
+
+ALL_BANNED_WORDS: List[str] = [w for cat in BANNED_WORD_CATEGORIES for w in cat]
 
 
 def _fmt_words(words: List[str]) -> str:
@@ -68,10 +104,14 @@ PROSE_DISCIPLINE_BLOCK = f"""
    證據裡沒有的門檻、比例、金額**一律不得發明**——寧可寫「本研究資料未涵蓋此項」。
 
 **4. 禁用詞表**（出現即視為不合格，改寫成直說）：
-   - 軟墊詞：{_fmt_words(BANNED_HEDGE_WORDS)}
-   - 導覽與總結句：{_fmt_words(BANNED_NAVIGATION_WORDS)}
-   - 假條件句：{_fmt_words(BANNED_FAKE_CONDITIONALS)}
-   - 模糊量詞：{_fmt_words(BANNED_VAGUE_QUANTIFIERS)}
+   - 軟墊詞（拿掉語意不變）：{_fmt_words(BANNED_HEDGE_WORDS)}
+   - 導覽與總結句（小標自己會導覽；回頭指前文就是在重講）：{_fmt_words(BANNED_NAVIGATION_WORDS)}
+   - 假條件句（沒有排除任何可能）：{_fmt_words(BANNED_FAKE_CONDITIONALS)}
+   - 模糊量詞（證據有數字就寫數字，沒有就說沒有）：{_fmt_words(BANNED_VAGUE_QUANTIFIERS)}
+   - 稻草人句型（沒人打算做錯的事不必警告，直接寫它的用途）：{_fmt_words(BANNED_STRAWMAN)}
+   - 替讀者數數（數量本身是資訊才講數量，否則直接列）：{_fmt_words(BANNED_COUNTING_FOR_READER)}
+   - 無主詞斷言（論述掛信源，寫出是誰說的；來源沒寫是誰就是證據不足）：{_fmt_words(BANNED_SUBJECTLESS_CLAIMS)}
+   - 替讀者下定義（不替讀者決定他的工作或處境長什麼樣）：{_fmt_words(BANNED_PRESUMING_READER)}
 
 **5. 標題給理由，不只給動作。** 把該節最有力的資訊提到標題。標題用陳述句，
    不用否定句（讀者從否定句讀不出該改用什麼）。
@@ -118,7 +158,7 @@ _SHAPE_SPECS: Dict[str, str] = {
 **其後倒三角遞減**：先寫最重要的發現，再寫脈絡與成因，再寫對立說法，最後寫限制。
 讀者只讀前三分之一就離開時，帶走的必須是最重要的那幾件事。
 
-**對立說法要指名**：誰主張什麼、根據是什麼，兩方都給版面，不要用「各界看法不一」帶過。
+**對立說法要指名**：誰主張什麼、根據是什麼，兩方都給版面，不用一句籠統的分歧帶過。
 
 **版面規則**：章內小標一律用 markdown `###` 開頭，不要寫成裸文字行（裸文字行匯出後
 沒有落點，整章讀起來是一片流水帳）。正文第一行直接開始寫，不要把章名再寫一次
@@ -314,3 +354,4 @@ def strip_duplicate_title(title, content):
             rest.pop(0)
         return "\n".join(rest)
     return content
+
