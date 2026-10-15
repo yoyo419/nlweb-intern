@@ -174,6 +174,8 @@ class WriterAgent(BaseReasoningAgent):
         # 報告行文改版（2026-08-28）：骨架 registry + 並排比較欄位透傳。
         report_shape: Optional[str] = None,
         comparison_fields: Optional[List[str]] = None,
+        # 篇幅與跨章重複（2026-10-15）：前面章節已用過的來源 → 章號。
+        prior_source_chapters: Optional[Dict[int, List[int]]] = None,
     ) -> 'LiveWriterSectionOutput':  # noqa: F821
         """
         在 Live Research 分段模式下撰寫單一章節。
@@ -231,6 +233,7 @@ class WriterAgent(BaseReasoningAgent):
             # 報告行文改版（2026-08-28）
             report_shape=report_shape,
             comparison_fields=comparison_fields,
+            prior_source_chapters=prior_source_chapters,
         )
 
         _llm_start = time.perf_counter()

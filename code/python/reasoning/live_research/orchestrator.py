@@ -32,6 +32,7 @@ from reasoning.live_research.sse_emit import emit_sse
 from reasoning.live_research.stage_state import LiveResearchStageState
 from reasoning.prompts.prose_discipline import (
     DEFAULT_SECTION_CHAR_CAP,
+    find_cross_chapter_repeats,
     lint_prose,
     measure_section_chars,
     strip_duplicate_title,
@@ -40,6 +41,7 @@ from reasoning.citation_stats import (
     compute_source_reliance,
     count_cite_placeholders,
     filter_verified_quotes,
+    prior_source_chapters,
     render_open_gaps_block,
     render_reliance_block,
 )
@@ -5859,6 +5861,11 @@ class LiveResearchOrchestrator(OrchestratorBase):
             (topic.get("comparison_fields") if isinstance(topic, dict) else None)
             or (format_specs or {}).get("comparison_fields")
         )
+        # 篇幅與跨章重複（2026-10-15）：前面章節用過哪些來源，讓本章不從頭重講。
+        _writer_kw["prior_source_chapters"] = (
+            prior_source_chapters(state.written_sections[:current_chapter_index])
+            if state is not None else None
+        )
 
         # ────────────────────────────────────────────────────────────────────
         # Track A Task 3 / addendum C-1 deterministic gate (sprint 2026-05-28):
@@ -6144,6 +6151,7 @@ class LiveResearchOrchestrator(OrchestratorBase):
                 knowledge_graph=_writer_kw["knowledge_graph"],
                 report_shape=_writer_kw["report_shape"],
                 comparison_fields=_writer_kw["comparison_fields"],
+                prior_source_chapters=_writer_kw["prior_source_chapters"],
             )
         except Exception as e:
             _section_elapsed = time.perf_counter() - _section_start
@@ -6257,6 +6265,7 @@ class LiveResearchOrchestrator(OrchestratorBase):
                     knowledge_graph=_writer_kw["knowledge_graph"],
                     report_shape=_writer_kw["report_shape"],
                     comparison_fields=_writer_kw["comparison_fields"],
+                    prior_source_chapters=_writer_kw["prior_source_chapters"],
                 )
                 # 第二次寫完再跑 hallucination guard subset check (citation 白名單)
                 section_output, was_corrected_2 = apply_hallucination_guard(
@@ -6385,6 +6394,7 @@ class LiveResearchOrchestrator(OrchestratorBase):
                         knowledge_graph=_writer_kw["knowledge_graph"],
                         report_shape=_writer_kw["report_shape"],
                         comparison_fields=_writer_kw["comparison_fields"],
+                        prior_source_chapters=_writer_kw["prior_source_chapters"],
                     )
                     was_corrected = True
                     # ── Important 1: specificity rewrite 後**重跑三層守門**，確保
@@ -6497,6 +6507,7 @@ class LiveResearchOrchestrator(OrchestratorBase):
                         knowledge_graph=_writer_kw["knowledge_graph"],
                         report_shape=_writer_kw["report_shape"],
                         comparison_fields=_writer_kw["comparison_fields"],
+                        prior_source_chapters=_writer_kw["prior_source_chapters"],
                     )
                     was_corrected = True
                     # rewrite 後重跑 citation guard（與 entity-guard rewrite 對稱）
@@ -7531,7 +7542,7 @@ class LiveResearchOrchestrator(OrchestratorBase):
 
         # 行文 lint（2026-08-28）：prompt 紀律鎖不住模型（實測仍會漏禁用詞）。
         # 這裡不改稿——改稿要再燒一次 writer；命中就留 warning，讓問題浮現。
-        # 篇幅（2026-10-15）：只記錄不改稿，下一輪調 prompt 時看得到哪章超長。
+        # 篇幅與跨章重複（2026-10-15）：只記錄不改稿，下一輪調 prompt 時看得到哪章超長、哪段重講。
         for _i, _sec in enumerate(state.written_sections):
             _chars = measure_section_chars(_sec.get("content") or "")
             if _chars > DEFAULT_SECTION_CHAR_CAP:
@@ -7539,6 +7550,14 @@ class LiveResearchOrchestrator(OrchestratorBase):
                     f"[LIVE RESEARCH] 第 {_i + 1} 章 {_chars} 字，超過預設上限 "
                     f"{DEFAULT_SECTION_CHAR_CAP}（outline 有指定字數時以指定為準）"
                 )
+        _repeats = find_cross_chapter_repeats(
+            [_sec.get("content") or "" for _sec in state.written_sections]
+        )
+        if _repeats:
+            logger.warning(
+                f"[LIVE RESEARCH] 跨章逐字重複 {len(_repeats)} 段："
+                + "；".join(f"第{a + 1}→{b + 1}章 {t[:20]!r}" for t, (a, b) in _repeats[:5])
+            )
 
         _prose_hits = lint_prose(full_report)
         if _prose_hits:

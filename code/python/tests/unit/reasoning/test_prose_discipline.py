@@ -22,6 +22,7 @@ from reasoning.citation_stats import (
     compute_source_reliance,
     count_cite_placeholders,
     filter_verified_quotes,
+    prior_source_chapters,
     render_open_gaps_block,
     render_reliance_block,
     verify_quote,
@@ -32,6 +33,7 @@ from reasoning.prompts.prose_discipline import (
     DEFAULT_REPORT_SHAPE,
     DEFAULT_SECTION_CHAR_CAP,
     build_shape_block,
+    find_cross_chapter_repeats,
     measure_section_chars,
     lint_prose,
     is_known_report_shape,
@@ -402,3 +404,49 @@ class TestSectionLength:
     def test_measure_ignores_cite_marks_layout_and_whitespace(self):
         assert measure_section_chars("### 小標\n\n環團聲明{cite:3}[4]。 ") == len("小標環團聲明。")
 
+
+@pytest.mark.unit
+class TestSourceReuseAcrossChapters:
+    """同一來源不要每章從頭重講一次。"""
+
+    def test_prior_source_chapters_from_counts_and_fallback(self):
+        sections = [
+            {"citation_counts": {"6": 2, "8": 1}},
+            {"sources_used": [6, 9]},
+        ]
+        assert prior_source_chapters(sections) == {6: [0, 1], 8: [0], 9: [1]}
+
+    def test_prompt_lists_sources_used_by_earlier_chapters(self):
+        prompt = _section_prompt(current_chapter_index=2, prior_source_chapters={6: [0, 1], 8: [0]})
+        assert "## 前面章節已交代過的來源" in prompt
+        assert "[6] 第 1、2 章已用" in prompt
+        assert "[8] 第 1 章已用" in prompt
+
+    def test_first_chapter_has_no_reuse_block(self):
+        assert "前面章節已交代過的來源" not in _section_prompt(prior_source_chapters={})
+
+    def test_orchestrator_passes_prior_sources_to_every_writer_callsite(self):
+        import inspect
+        from reasoning.live_research import orchestrator as orch
+
+        src = inspect.getsource(orch.LiveResearchOrchestrator._write_section)
+        assert src.count('comparison_fields=_writer_kw["comparison_fields"]') == src.count(
+            'prior_source_chapters=_writer_kw["prior_source_chapters"]'
+        ), "有 writer callsite 漏帶 prior_source_chapters，該路徑會悄悄退回每章重講"
+
+    def test_repeats_found_across_chapters_not_within(self):
+        a = "環評門檻加嚴後六大環團在協商前一天發出聯合聲明。"
+        contents = [a, "另一章開頭。" + a + "結尾", "完全不同的內容在這裡寫一段話。"]
+        reps = find_cross_chapter_repeats(contents)
+        assert reps and reps[0][1] == [0, 1]
+        assert "六大環團在協商前一天" in reps[0][0]
+
+    def test_no_repeats_on_distinct_chapters(self):
+        assert find_cross_chapter_repeats(["甲章講饋線登記的時程。", "乙章講漁電共生的收益。"]) == []
+
+    def test_stage_6_logs_length_and_repeats(self):
+        import inspect
+        from reasoning.live_research import orchestrator as orch
+
+        src = inspect.getsource(orch.LiveResearchOrchestrator._run_stage_6)
+        assert "measure_section_chars" in src and "find_cross_chapter_repeats" in src
