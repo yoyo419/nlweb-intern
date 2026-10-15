@@ -9,6 +9,19 @@ from core.prompts import generate_boundary_token, wrap_content_with_boundary
 # P2 W6：runtime import 全 pool budget 常數（evidence_block char cap 用，§3.1 I3）。
 from reasoning.schemas_live import GROUNDING_VIEW_CHAR_BUDGET
 from core.temporal_anchor import annotate_relative_years, anchor_note, TEMPORAL_ANCHOR_RULE
+from reasoning.prompts.prose_discipline import (
+    PROSE_DISCIPLINE_BLOCK,
+    TRACEABILITY_BLOCK,
+    OPEN_GAPS_BLOCK,
+    DEFAULT_REPORT_SHAPE,
+    build_shape_block,
+    build_comparison_fields_block,
+    is_known_report_shape,
+    normalize_report_shape,
+)
+import logging
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from reasoning.schemas_live import (
@@ -195,6 +208,7 @@ class WriterPromptBuilder:
         user_query: str,
         suggested_confidence: str,
         evidence_lookup: Optional[Dict[int, Dict[str, str]]] = None,
+        report_shape: Optional[str] = None,
     ) -> str:
         """
         Build compose prompt from PDF System Prompt (pages 26-31).
@@ -216,8 +230,15 @@ class WriterPromptBuilder:
         critic_feedback = self._format_critic_feedback(critic_review)
         evidence_block = self._render_evidence_lookup_block(evidence_lookup)
 
-        # Get template for mode
-        template = self._get_template_for_mode(mode)
+        # 報告骨架（2026-08-28）：mode 已於 2026-04 統一，改由 report_shape 決定骨架。
+        # None → 預設倒三角新聞骨架；未知值降級並留 warning（不 silent fallback）。
+        _shape_raw = report_shape or DEFAULT_REPORT_SHAPE
+        if not is_known_report_shape(_shape_raw):
+            logger.warning(
+                "[WRITER PROMPT] 未知 report_shape %r，降級為預設骨架 %s",
+                _shape_raw, DEFAULT_REPORT_SHAPE,
+            )
+        template = self._get_template_for_shape(_shape_raw)
 
         # P1-4: Wrap analyst_draft with isolation boundary to prevent indirect injection
         boundary = generate_boundary_token()
@@ -285,7 +306,7 @@ class WriterPromptBuilder:
 請套用以下報告模板：
 
 {template}
-
+{PROSE_DISCIPLINE_BLOCK}
 ---
 
 ## 輸出要求
@@ -436,6 +457,10 @@ class WriterPromptBuilder:
         # 全圖精簡摘要（非 per-chapter 子圖），自帶 char 上限，獨立於 MAX_EVIDENCE_CHARS。
         # 僅供理解實體關係，不可作為引用依據（citation 只能用 findings 的 [N]）。
         knowledge_graph: Optional['KnowledgeGraph'] = None,  # noqa: F821
+        # 報告行文改版（2026-08-28）：骨架 registry + 並排比較欄位。
+        # report_shape 由 Stage 4 format_specs 決定；None → 預設倒三角新聞骨架。
+        report_shape: Optional[str] = None,
+        comparison_fields: Optional[List[str]] = None,
     ) -> str:
         """
         Build per-section compose prompt for Live Research mode (Task 7).
@@ -999,6 +1024,33 @@ class WriterPromptBuilder:
                 f"{writer_evidence_view}\n"
             )
 
+        # ── 報告行文改版（2026-08-28）─────────────────────────────────
+        # 骨架（shape）是使用者可選的：記者要倒三角，永續報告書撰寫者要對照表。
+        # 未知值不 silent fallback —— 降級到預設骨架時留 warning。
+        _shape_raw = report_shape or DEFAULT_REPORT_SHAPE
+        if not is_known_report_shape(_shape_raw):
+            logger.warning(
+                "[WRITER PROMPT] 未知 report_shape %r，降級為預設骨架 %s",
+                _shape_raw, DEFAULT_REPORT_SHAPE,
+            )
+        _shape = normalize_report_shape(_shape_raw)
+        # 骨架描述的是整份報告；本 prompt 只寫一章，所以要講清楚哪一段屬於哪一章。
+        if current_chapter_index == 0:
+            _chapter_scope_note = (
+                "\n**本章是第 1 章**：上面骨架講的導言（lead）與核心段（nut graf）"
+                "就是本章開頭要寫的東西。\n"
+            )
+        else:
+            _chapter_scope_note = (
+                f"\n**本章是第 {current_chapter_index + 1} 章**：導言與核心段屬於第 1 章，"
+                "本章不要重寫一次開場，直接承接往下寫。\n"
+            )
+        shape_block = build_shape_block(_shape) + _chapter_scope_note
+        prose_block = PROSE_DISCIPLINE_BLOCK
+        traceability_block = "" if citation_format == "none" else TRACEABILITY_BLOCK
+        open_gaps_block = OPEN_GAPS_BLOCK
+        comparison_block = build_comparison_fields_block(comparison_fields or [])
+
         return f"""你是**分段報告撰寫專家**。你負責撰寫研究報告的一個章節。
 
 ---
@@ -1035,7 +1087,7 @@ class WriterPromptBuilder:
 - ✅ 正確：「再生能源占比達 32.5%[1]，超越預期目標[2]。」
 - ❌ 錯誤：「...政策成效顯著。\n\n來源：[N1] [N2] [N3] ...」（段末整串清單 dump）
 - ❌ 錯誤：使用 evidence pool 之外（發明）的 ID
-{evidence_block}{writer_view_block}{binding_block}{grounding_discipline_block}{calibration_block}{style_block}{format_block}{special_elements_block}{revision_block}{ungrounded_revision_block}{prior_entities_block}{context_block}{kg_block}{outline_block}{prev_summary_block}
+{evidence_block}{writer_view_block}{binding_block}{grounding_discipline_block}{calibration_block}{shape_block}{prose_block}{traceability_block}{open_gaps_block}{comparison_block}{style_block}{format_block}{special_elements_block}{revision_block}{ungrounded_revision_block}{prior_entities_block}{context_block}{kg_block}{outline_block}{prev_summary_block}
 ---
 
 ## 輸出格式（LiveWriterSectionOutput JSON）
@@ -1048,14 +1100,16 @@ class WriterPromptBuilder:
   "section_content": "此章節的完整 Markdown 內容（含 {{cite:N}} placeholder 標記事實後的引用位置）",
   "sources_used": [1, 2],
   "confidence_level": "High | Medium | Low",
-  "narration": "撰寫此章節時的決策說明（用了哪些來源、為什麼這樣組織、哪裡需要更多資料）",
+  "narration": "為什麼挑這個角度談、用了哪些來源、哪裡的資料撐不住（給讀者看的，不是給系統看的）",
   "chapter_summary": "本章 50 字摘要（供下一章 writer 看，幫助銜接 + 避免重複；conclusion 章可填整書收尾要點）",
-  "citations": [{{"evidence_id": 1}}, {{"evidence_id": 2}}]
+  "citations": [{{"evidence_id": 1, "quote": "來源摘要中逐字複製的 10-40 字"}}, {{"evidence_id": 2, "quote": ""}}],
+  "open_gaps": [{{"question": "本章需要但答不了的具體問題", "why_missing": "為什麼現有資料答不了", "where_to_look": "internal | web | manual"}}]
 }}
 ```
 
 **citations 欄位**（TypeAgent Target 3）：列出本章引用的 evidence_id 結構化清單。
-每個 entry `{{"evidence_id": N}}` 對應 section_content 中的 `{{cite:N}}` placeholder。
+每個 entry 對應 section_content 中的一處 `{{cite:N}}` placeholder；同一來源被引用兩次
+就出現兩筆（系統據此統計哪一篇被倚重最多）。`quote` 規則見上方「可回溯到句」。
 系統會用此 list 做引用完整性檢查 + post-process render 為使用者拍板的 citation style。
 
 ### 引用格式（依使用者偏好）
@@ -1069,7 +1123,10 @@ class WriterPromptBuilder:
 
 1. 只撰寫本章節（section_content），不要寫整份報告。
 2. 嚴格遵守引用白名單，不要發明新的 ID。
-3. narration 欄位用自然的繁體中文說明撰寫決策。
+3. narration 欄位用自然的繁體中文寫給讀者看：為什麼挑這個角度談、這一章靠哪些來源、
+   哪裡的資料撐不住。這段會露出給使用者，不要寫成系統日誌。
+4. 交稿前把 section_content 從頭掃一次上方「禁用詞表」的四類詞。命中就改寫該句，
+   直接說出你要說的事。系統會在匯出時再掃一次並記錄命中處。
 4. 輸出必須是完整的、有效的 JSON 格式。
 
 重要安全規則：
@@ -1111,6 +1168,13 @@ class WriterPromptBuilder:
             feedback += "\n".join(f"- {i}" for i in critic_review.source_issues)
 
         return feedback
+
+    def _get_template_for_shape(self, shape: str) -> str:
+        """報告骨架 registry —— 骨架文字的單一定義來源在 prompts/prose_discipline.py。
+
+        DR 與 LR 共用同一份定義；此處只是 DR 側的取用點。
+        """
+        return build_shape_block(shape)
 
     def _get_template_for_mode(self, mode: str) -> str:
         """

@@ -171,6 +171,9 @@ class WriterAgent(BaseReasoningAgent):
         evidence_sufficiency: Optional[str] = None,
         # Task 3 (DR-parity): KG 摘要透傳給 prompt builder（全圖背景脈絡，非引用來源）。
         knowledge_graph: Optional['KnowledgeGraph'] = None,  # noqa: F821
+        # 報告行文改版（2026-08-28）：骨架 registry + 並排比較欄位透傳。
+        report_shape: Optional[str] = None,
+        comparison_fields: Optional[List[str]] = None,
     ) -> 'LiveWriterSectionOutput':  # noqa: F821
         """
         在 Live Research 分段模式下撰寫單一章節。
@@ -225,6 +228,9 @@ class WriterAgent(BaseReasoningAgent):
             evidence_sufficiency=evidence_sufficiency,
             # Task 3 (DR-parity): KG 摘要透傳
             knowledge_graph=knowledge_graph,
+            # 報告行文改版（2026-08-28）
+            report_shape=report_shape,
+            comparison_fields=comparison_fields,
         )
 
         _llm_start = time.perf_counter()

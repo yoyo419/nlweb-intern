@@ -613,3 +613,6 @@ docs/superpowers/
 
 # 實習契約已填/用印工作區（含個資 + 公司印章影像，機敏，2026-07-27）
 docs/intern/已填公司資料/
+
+# 報告行文 replay harness 產物（含 prompt 快取，不進版控）
+code/python/tools/report_replay_out/

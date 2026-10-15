@@ -1124,6 +1124,33 @@ class CitationInline(BaseModel):
     evidence_id: int = Field(
         ..., description="必須 ∈ analyst_citations 白名單；hallucination guard 兜底"
     )
+    quote: str = Field(
+        default="",
+        description=(
+            "支撐該句的來源逐字片段（10-40 字）。用途：前端據此組 URL Text Fragment，"
+            "讀者點 [N] 直接跳到原文那一句，而不是整篇文章。"
+            "由 citation_stats.verify_quote 校驗是否真的逐字出現在該 evidence snippet；"
+            "對不上即丟棄並 log（不 silent fail），前端降級為裸 URL。"
+            "舊 session / LLM 未輸出 → 空字串（backward compat）。"
+        ),
+    )
+
+
+class OpenGap(BaseModel):
+    """本章答不了、而論述真的需要的那一筆資料。
+
+    存在理由：研究者的抱怨是「分析完不說接下來還缺什麼」，以及「缺什麼就說缺什麼，
+    別說拿現有的某一段也可以」。writer 寫完章節後就地填，Stage 6 彙整進報告尾。
+    """
+
+    question: str = Field(..., description="具體到可以拿去查的一個問題")
+    why_missing: str = Field(
+        default="", description="為什麼現有資料答不了（缺年份 / 只有二手轉述 / 無官方版本…）"
+    )
+    where_to_look: Literal["internal", "web", "manual"] = Field(
+        default="web",
+        description="internal=站內語料再查；web=外部公開資料；manual=要人去問或調閱",
+    )
 
 
 class LiveWriterSectionOutput(BaseModel):
@@ -1152,6 +1179,28 @@ class LiveWriterSectionOutput(BaseModel):
             "避免另呼一次 LLM。舊 session restore 時無此欄位 → 空字串（writer 第一段"
             "或舊 written_sections 取 .get() 自然處理）。"
         ),
+    )
+    citation_quotes: Dict[int, str] = Field(
+        default_factory=dict,
+        description=(
+            "evidence_id -> 已校驗過的來源逐字片段。由 orchestrator 在 render 前用 "
+            "citation_stats.filter_verified_quotes 驗過（quote 必須真的出現在該 "
+            "evidence snippet 裡），前端據此組 URL Text Fragment，讀者點 [N] 跳到 "
+            "原文那一句而不是整篇。驗不過的 quote 會被丟棄並 log。"
+        ),
+    )
+    citation_counts: Dict[int, int] = Field(
+        default_factory=dict,
+        description=(
+            "evidence_id -> 本章 `{cite:N}` 出現次數。由 orchestrator 在 render "
+            "placeholder **之前**就地統計（render 後 placeholder 已變成 [N] / 上標 / "
+            "APA 字串，數不回來）。Stage 6 的「本報告最倚重的來源」表靠這個欄位算"
+            "真實引用次數；缺此欄位時 citation_stats 退回每章每來源計 1 次並標明。"
+        ),
+    )
+    open_gaps: List[OpenGap] = Field(
+        default_factory=list,
+        description="本章答不了、而論述需要的資料缺口；Stage 6 彙整進報告尾。",
     )
     citations: List[CitationInline] = Field(
         default_factory=list,

@@ -30,6 +30,14 @@ from reasoning.live_research.loop_engine import BABLoopEngine
 from reasoning.live_research import lr_copy
 from reasoning.live_research.sse_emit import emit_sse
 from reasoning.live_research.stage_state import LiveResearchStageState
+from reasoning.prompts.prose_discipline import lint_prose, strip_duplicate_title
+from reasoning.citation_stats import (
+    compute_source_reliance,
+    count_cite_placeholders,
+    filter_verified_quotes,
+    render_open_gaps_block,
+    render_reliance_block,
+)
 from core.llm import ask_llm
 from reasoning.schemas_live import (
     BookOutline,
@@ -600,7 +608,10 @@ def _section_dict(
     return {
         "section_index": section_index,
         "title": section_output.section_title,
-        "content": section_output.section_content,
+        # 模型常在正文開頭把章名再寫一次；章名由 Stage 6 排 "## "，不剝會重複兩次。
+        "content": strip_duplicate_title(
+            section_output.section_title, section_output.section_content
+        ),
         "sources_used": section_output.sources_used,
         "confidence_level": section_output.confidence_level,
         "chapter_summary": getattr(section_output, "chapter_summary", "") or "",
@@ -610,6 +621,15 @@ def _section_dict(
         # mock_bab E2E fix (2026-05-29): F1 critic WARN marker 存在 methodology_note，
         # 之前漏帶此 key → marker 序列化即丟，前端永遠收不到。補上讓資料送出。
         "methodology_note": getattr(section_output, "methodology_note", "") or "",
+        # 報告行文改版（2026-08-28）：來源倚重統計 + 資料缺口。
+        # citation_counts 由 _render_section_citations 在 render 前統計；
+        # 缺此 key 時 citation_stats 退回「每章每來源計 1 次」並在報告標明。
+        "citation_counts": dict(getattr(section_output, "citation_counts", None) or {}),
+        "citation_quotes": dict(getattr(section_output, "citation_quotes", None) or {}),
+        "open_gaps": [
+            g.model_dump() if hasattr(g, "model_dump") else dict(g)
+            for g in (getattr(section_output, "open_gaps", None) or [])
+        ],
     }
 
 
@@ -4490,6 +4510,23 @@ class LiveResearchOrchestrator(OrchestratorBase):
 
             return f"({author}, {year})"
 
+        # 來源倚重統計（2026-08-28）：placeholder 一旦 render 成 [N] / 上標 / APA
+        # 字串就數不回來，所以在 re.sub **之前**就地統計每個 evidence 的出現次數。
+        _citation_counts = count_cite_placeholders(content)
+
+        # 逐句可回溯（2026-08-28）：writer 交的 quote 必須真的逐字出現在該來源
+        # 摘要裡，否則前端會把讀者送到錯的位置。驗不過就丟棄並 log（不 silent fail），
+        # 前端沿既有「quote 空 → 裸 URL」單一判據降級。
+        _kept_quotes, _dropped_quotes = filter_verified_quotes(
+            getattr(section, "citations", None) or [], evidence_lookup or {}
+        )
+        if _dropped_quotes:
+            logger.warning(
+                f"[LIVE RESEARCH] citation quote 校驗未通過 {len(_dropped_quotes)} 筆"
+                f"（該引用降級為裸連結）："
+                + "; ".join(f"[{eid}] {q[:20]!r}" for eid, q in _dropped_quotes[:5])
+            )
+
         new_content = re.sub(r"\{cite:(\d+)\}", _replace, content)
 
         new_note = section.methodology_note
@@ -4507,6 +4544,8 @@ class LiveResearchOrchestrator(OrchestratorBase):
         return section.model_copy(update={
             "section_content": new_content,
             "methodology_note": new_note,
+            "citation_counts": _citation_counts,
+            "citation_quotes": _kept_quotes,
         })
 
     @staticmethod
@@ -5808,6 +5847,13 @@ class LiveResearchOrchestrator(OrchestratorBase):
         # FIX-5: 四個 compose_section callsite 共用的背景透傳參數（time_constraint /
         # evidence_sufficiency / knowledge_graph），單一來源避免漏帶即靜默退化。
         _writer_kw = self._common_writer_kwargs(state, chapter_sufficiency)
+        # 報告行文改版（2026-08-28）：骨架與並排欄位跟其他背景參數一樣，四個
+        # callsite 都要帶——漏帶會 silent 退化成預設骨架，且沒有 test 會叫。
+        _writer_kw["report_shape"] = (format_specs or {}).get("report_shape")
+        _writer_kw["comparison_fields"] = (
+            (topic.get("comparison_fields") if isinstance(topic, dict) else None)
+            or (format_specs or {}).get("comparison_fields")
+        )
 
         # ────────────────────────────────────────────────────────────────────
         # Track A Task 3 / addendum C-1 deterministic gate (sprint 2026-05-28):
@@ -6091,6 +6137,8 @@ class LiveResearchOrchestrator(OrchestratorBase):
                 time_constraint=_writer_kw["time_constraint"],
                 evidence_sufficiency=_writer_kw["evidence_sufficiency"],
                 knowledge_graph=_writer_kw["knowledge_graph"],
+                report_shape=_writer_kw["report_shape"],
+                comparison_fields=_writer_kw["comparison_fields"],
             )
         except Exception as e:
             _section_elapsed = time.perf_counter() - _section_start
@@ -6202,6 +6250,8 @@ class LiveResearchOrchestrator(OrchestratorBase):
                     time_constraint=_writer_kw["time_constraint"],
                     evidence_sufficiency=_writer_kw["evidence_sufficiency"],
                     knowledge_graph=_writer_kw["knowledge_graph"],
+                    report_shape=_writer_kw["report_shape"],
+                    comparison_fields=_writer_kw["comparison_fields"],
                 )
                 # 第二次寫完再跑 hallucination guard subset check (citation 白名單)
                 section_output, was_corrected_2 = apply_hallucination_guard(
@@ -6328,6 +6378,8 @@ class LiveResearchOrchestrator(OrchestratorBase):
                         time_constraint=_writer_kw["time_constraint"],
                         evidence_sufficiency=_writer_kw["evidence_sufficiency"],
                         knowledge_graph=_writer_kw["knowledge_graph"],
+                        report_shape=_writer_kw["report_shape"],
+                        comparison_fields=_writer_kw["comparison_fields"],
                     )
                     was_corrected = True
                     # ── Important 1: specificity rewrite 後**重跑三層守門**，確保
@@ -6438,6 +6490,8 @@ class LiveResearchOrchestrator(OrchestratorBase):
                         time_constraint=_writer_kw["time_constraint"],
                         evidence_sufficiency=_writer_kw["evidence_sufficiency"],
                         knowledge_graph=_writer_kw["knowledge_graph"],
+                        report_shape=_writer_kw["report_shape"],
+                        comparison_fields=_writer_kw["comparison_fields"],
                     )
                     was_corrected = True
                     # rewrite 後重跑 citation guard（與 entity-guard rewrite 對稱）
@@ -7429,10 +7483,39 @@ class LiveResearchOrchestrator(OrchestratorBase):
         if _title_was_generated:
             parts.append(f"> 原始查詢：{_research_question}\n")
 
+        # 「本報告最倚重的來源」（2026-08-28）：放在正文之前，讀者一進來就知道
+        # 這份東西靠哪幾篇撐起來，而不是讀到文末才看到一份沒有輕重的清單。
+        _pool_for_stats = deserialize_evidence_pool(state.evidence_pool_json)
+        _reliance_rows, _counting_mode = compute_source_reliance(
+            state.written_sections, _pool_for_stats
+        )
+        _reliance_block = render_reliance_block(
+            _reliance_rows, _counting_mode,
+            chapter_order=[s.get("title", "") for s in state.written_sections],
+        )
+        if _reliance_block:
+            parts.append(_reliance_block)
+            _top = _reliance_rows[0]
+            logger.info(
+                f"[LIVE RESEARCH] source reliance (mode={_counting_mode}): "
+                f"top eid={_top['evidence_id']} count={_top['citation_count']} "
+                f"across {_top['section_count']} chapters; "
+                f"{len(_reliance_rows)} sources cited"
+            )
+        else:
+            # 零引用是異常狀態，不可 silent（代表 grounding 全失敗）
+            logger.warning("[LIVE RESEARCH] Stage 6: 報告零引用，略過來源倚重表")
+
         for section in state.written_sections:
             parts.append(f"## {section['title']}\n")
             parts.append(section['content'])
             parts.append("")
+
+        # 「這份報告答不了什麼」（2026-08-28）：writer 逐章填的 open_gaps 彙整。
+        # 缺什麼就說缺什麼，不用現有段落充數。
+        _gaps_block = self._build_open_gaps_block(state)
+        if _gaps_block:
+            parts.append(_gaps_block)
 
         # References master list（Task 10 — 把 BAB 抓到的 evidence URL 列出來）
         references_block = self._build_references_block(state)
@@ -7440,6 +7523,17 @@ class LiveResearchOrchestrator(OrchestratorBase):
             parts.append(references_block)
 
         full_report = "\n".join(parts)
+
+        # 行文 lint（2026-08-28）：prompt 紀律鎖不住模型（實測仍會漏禁用詞）。
+        # 這裡不改稿——改稿要再燒一次 writer；命中就留 warning，讓問題浮現。
+        _prose_hits = lint_prose(full_report)
+        if _prose_hits:
+            from collections import Counter
+            _tally = Counter(w for w, _ in _prose_hits)
+            logger.warning(
+                f"[LIVE RESEARCH] 報告行文 lint 命中 {len(_prose_hits)} 處禁用詞："
+                + "、".join(f"{w}×{n}" for w, n in _tally.most_common())
+            )
 
         # Track D D1 (sprint 2026-05-28): KG SSE event metadata（餵前端 D3 視覺化）。
         # kg_payload 仍需構築供下方 SSE "knowledge_graph" 欄位使用。
@@ -7544,12 +7638,24 @@ class LiveResearchOrchestrator(OrchestratorBase):
         evidence_pool = deserialize_evidence_pool(state.evidence_pool_json)
         if not evidence_pool:
             return {}
+        # 逐句可回溯（2026-08-28）：writer 交的逐字引句已在 render 時校驗過，
+        # 優先於「整段 snippet 當 quote」——後者只能把讀者送到整篇文章。
+        per_claim_quotes: Dict[int, str] = {}
+        for _sec in state.written_sections:
+            for _k, _v in (_sec.get("citation_quotes") or {}).items():
+                try:
+                    _eid = int(_k)
+                except (TypeError, ValueError):
+                    continue
+                if _v and _eid not in per_claim_quotes:
+                    per_claim_quotes[_eid] = _v
         out: Dict[str, Dict[str, str]] = {}
         for eid, entry in evidence_pool.items():
             src = (getattr(entry, "source", "internal") or "internal").strip()
             raw_snippet = getattr(entry, "snippet", "") or ""
-            # Decision 2'：非 internal source 不交 quote（避免組必 miss 的 fragment）
-            quote = (
+            # Decision 2'：非 internal source 不交整段 snippet 當 quote（必 miss）。
+            # 逐句 quote 已驗過確實出現在 snippet 內，故不受此分流限制。
+            quote = per_claim_quotes.get(eid) or (
                 LiveResearchOrchestrator._extract_quote(raw_snippet)
                 if src in LiveResearchOrchestrator._TEXTFRAG_OK_SOURCES
                 else ""
@@ -7561,6 +7667,11 @@ class LiveResearchOrchestrator(OrchestratorBase):
                 "quote": quote,
             }
         return out
+
+    def _build_open_gaps_block(self, state: LiveResearchStageState) -> str:
+        """報告尾的「這份報告答不了什麼」。排版定義在 reasoning/citation_stats.py，
+        與 tools/report_replay.py 共用同一份（避免兩套排版漂移）。"""
+        return render_open_gaps_block(state.written_sections)
 
     def _build_references_block(self, state: LiveResearchStageState) -> str:
         """組合 references master list — 列 evidence_pool 全部條目（DR parity B1）。
