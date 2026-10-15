@@ -11,7 +11,8 @@
   永續報告書撰寫者要的是「外界關切 × 公司作為」對照表。
 """
 
-from typing import Dict, List
+import re
+from typing import Dict, List, Optional
 
 # ---------------------------------------------------------------------------
 # 禁用詞表 —— prompt 與測試共用同一份（改詞表 = 同時改 prompt 與斷言）
@@ -354,4 +355,37 @@ def strip_duplicate_title(title, content):
             rest.pop(0)
         return "\n".join(rest)
     return content
+
+
+# ---------------------------------------------------------------------------
+# 篇幅 —— CEO 2026-08-29 看完 replay 成品：「超級長」「這樣我有點難讀」
+# ---------------------------------------------------------------------------
+
+# 沒有使用者 / outline 指定字數時，每章正文的上限（中文字數，不含引用標記與排版符號）。
+# 有指定字數時以指定為準（見 writer.py outline_block 的「本章目標字數」），這裡不介入。
+DEFAULT_SECTION_CHAR_CAP = 1200
+
+_CITE_MARK_RE = re.compile(r"\{cite:\d+\}|\[\d+(?:[,，、]\s*\d+)*\]")
+_LAYOUT_RE = re.compile(r"[#*>|`\-\s]")
+
+
+def build_length_block(cap: int = DEFAULT_SECTION_CHAR_CAP) -> str:
+    """沒有指定字數時的篇幅原則。上限不是目標：資料撐多少寫多少。"""
+    return f"""
+---
+
+## 篇幅
+
+本章正文以 {cap} 字為上限（引用標記不算，大約是五、六個段落）。讀者要能一口氣讀完一章，
+讀得完才用得上。上限不是要湊滿的目標：證據撐得起多少就寫多少。
+
+一章只回答章節大綱交代的那個問題；每個小標底下只留支撐該判斷所需的事實，旁支背景交給
+參考文獻。寫完超過上限時，先刪掉前面章節已經交代過的內容，再刪掉不改變讀者判斷的句子，
+不要靠壓縮成電報體來省字。
+"""
+
+
+def measure_section_chars(text: str) -> int:
+    """章節正文的字數：去掉引用標記、markdown 排版符號與空白後的字元數。"""
+    return len(_LAYOUT_RE.sub("", _CITE_MARK_RE.sub("", text or "")))
 

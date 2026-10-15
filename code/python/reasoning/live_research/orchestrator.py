@@ -30,7 +30,12 @@ from reasoning.live_research.loop_engine import BABLoopEngine
 from reasoning.live_research import lr_copy
 from reasoning.live_research.sse_emit import emit_sse
 from reasoning.live_research.stage_state import LiveResearchStageState
-from reasoning.prompts.prose_discipline import lint_prose, strip_duplicate_title
+from reasoning.prompts.prose_discipline import (
+    DEFAULT_SECTION_CHAR_CAP,
+    lint_prose,
+    measure_section_chars,
+    strip_duplicate_title,
+)
 from reasoning.citation_stats import (
     compute_source_reliance,
     count_cite_placeholders,
@@ -7526,6 +7531,15 @@ class LiveResearchOrchestrator(OrchestratorBase):
 
         # 行文 lint（2026-08-28）：prompt 紀律鎖不住模型（實測仍會漏禁用詞）。
         # 這裡不改稿——改稿要再燒一次 writer；命中就留 warning，讓問題浮現。
+        # 篇幅（2026-10-15）：只記錄不改稿，下一輪調 prompt 時看得到哪章超長。
+        for _i, _sec in enumerate(state.written_sections):
+            _chars = measure_section_chars(_sec.get("content") or "")
+            if _chars > DEFAULT_SECTION_CHAR_CAP:
+                logger.warning(
+                    f"[LIVE RESEARCH] 第 {_i + 1} 章 {_chars} 字，超過預設上限 "
+                    f"{DEFAULT_SECTION_CHAR_CAP}（outline 有指定字數時以指定為準）"
+                )
+
         _prose_hits = lint_prose(full_report)
         if _prose_hits:
             from collections import Counter
