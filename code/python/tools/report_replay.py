@@ -44,12 +44,14 @@ from reasoning.citation_stats import (  # noqa: E402
     compute_source_reliance,
     count_cite_placeholders,
     filter_verified_quotes,
+    prior_source_chapters,
     render_open_gaps_block,
     render_reliance_block,
 )
 from reasoning.prompts.prose_discipline import (  # noqa: E402
     DEFAULT_REPORT_SHAPE,
     DEFAULT_SECTION_CHAR_CAP,
+    find_cross_chapter_repeats,
     lint_prose,
     measure_section_chars,
     strip_duplicate_title,
@@ -161,6 +163,7 @@ async def compose_one(
     evidence_view: str,
     shape: str,
     prev_summary: str,
+    prior_sources: Dict[int, List[int]],
     cache_dir: str,
     dry_run: bool,
     cache_only: bool,
@@ -179,6 +182,7 @@ async def compose_one(
         previous_chapter_summary=prev_summary,
         report_shape=shape,
         comparison_fields=chapter.get("comparison_fields"),
+        prior_source_chapters=prior_sources,
     )
     key = cache_key(prompt)
 
@@ -315,7 +319,8 @@ async def main() -> int:
     for idx, ch in enumerate(chapters):
         sec = await compose_one(
             writer, builder, ch, idx, len(chapters), pool, evidence_view,
-            shape, prev_summary, cache_dir, args.dry_run, args.cache_only,
+            shape, prev_summary, prior_source_chapters(sections),
+            cache_dir, args.dry_run, args.cache_only,
         )
         if not sec:
             continue
@@ -342,13 +347,20 @@ async def main() -> int:
     total_quotes = sum(len(s.get("citation_quotes") or {}) for s in sections)
     print(f"逐字引句：{total_quotes} 個來源附上可跳轉的原文片段（全部通過逐字校驗）")
 
-    # 篇幅：CEO 8/29 嫌 demo「超級長」，每次跑都印出來比
+    # 篇幅與跨章重複：CEO 8/29 嫌 demo「超級長」，每次跑都印出來比
     print(f"\n各章字數（預設上限 {DEFAULT_SECTION_CHAR_CAP}，不含引用標記與排版符號）：")
     for s in sections:
         n = measure_section_chars(s["content"])
         flag = "  ← 超過" if n > DEFAULT_SECTION_CHAR_CAP else ""
         print(f"  第 {s['section_index'] + 1} 章 {n} 字{flag}")
     print(f"  合計 {sum(measure_section_chars(s['content']) for s in sections)} 字")
+    spread = prior_source_chapters(sections)
+    every = [eid for eid, chs in spread.items() if len(chs) == len(sections) and len(sections) > 1]
+    print(f"每章都引用的來源：{len(every)} 個 {sorted(every)}")
+    repeats = find_cross_chapter_repeats([s["content"] for s in sections])
+    print(f"跨章逐字重複：{len(repeats)} 段")
+    for t, (a, b) in repeats[:5]:
+        print(f"  第 {a + 1} → {b + 1} 章：{t[:30]}")
 
     # 行文 lint：prompt 擋不住的在這裡現形，下一輪就知道要調哪條規則
     hits = lint_prose("\n".join(s["content"] for s in sections))

@@ -54,6 +54,28 @@ def _normalize_counts(raw: Any) -> Dict[int, int]:
     return out
 
 
+def prior_source_chapters(written_sections: List[Dict[str, Any]]) -> Dict[int, List[int]]:
+    """evidence_id → 引用過該來源的章號（0-based，依 written_sections 順序）。
+
+    給 writer 下一章用：前面章節已交代過的來源，本章不要從頭再講一次。
+    與 compute_source_reliance 同一套判準：有 citation_counts 用它，沒有退回 sources_used。
+    """
+    out: Dict[int, List[int]] = {}
+    for idx, section in enumerate(written_sections or []):
+        eids = set(_normalize_counts(section.get("citation_counts")))
+        if not eids:
+            for eid in section.get("sources_used") or []:
+                try:
+                    eid_int = int(eid)
+                except (TypeError, ValueError):
+                    continue
+                if eid_int != 0:
+                    eids.add(eid_int)
+        for eid in sorted(eids):
+            out.setdefault(eid, []).append(idx)
+    return out
+
+
 def compute_source_reliance(
     written_sections: List[Dict[str, Any]],
     evidence_pool: Optional[Dict[int, Any]] = None,

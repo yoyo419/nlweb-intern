@@ -118,7 +118,8 @@ PROSE_DISCIPLINE_BLOCK = f"""
    不用否定句（讀者從否定句讀不出該改用什麼）。
 
 **6. 一件事講完就走。** 同一個論點不要換十種說法重講；一段話的第二三句不要
-   只是把第一句換句話說；同一個比喻不要用超過兩次。
+   只是把第一句換句話說；同一個比喻不要用超過兩次。整份報告也一樣：一個來源的
+   背景、數字與主張只在第一次用到的那一章完整交代，之後各章只取當章論點需要的那一點。
 
 **7. 句子縮短，讓標點分擔。** 四個子句以上的長句拆開。連續三四句長度與結構
    一樣就是機器味，長句後面接短句。
@@ -358,7 +359,7 @@ def strip_duplicate_title(title, content):
 
 
 # ---------------------------------------------------------------------------
-# 篇幅 —— CEO 2026-08-29 看完 replay 成品：「超級長」「這樣我有點難讀」
+# 篇幅與跨章重複 —— CEO 2026-08-29 看完 replay 成品：「超級長」「這樣我有點難讀」
 # ---------------------------------------------------------------------------
 
 # 沒有使用者 / outline 指定字數時，每章正文的上限（中文字數，不含引用標記與排版符號）。
@@ -385,7 +386,65 @@ def build_length_block(cap: int = DEFAULT_SECTION_CHAR_CAP) -> str:
 """
 
 
+def build_source_reuse_block(prior_source_chapters: Optional[Dict[int, List[int]]]) -> str:
+    """列出前面章節已用過的來源，讓本章不要把同一來源從頭再講一次。
+
+    prior_source_chapters：evidence_id → 已引用該來源的章號（0-based）。
+    """
+    if not prior_source_chapters:
+        return ""
+    lines = []
+    for eid in sorted(prior_source_chapters):
+        chs = sorted(set(prior_source_chapters[eid]))
+        if not chs:
+            continue
+        lines.append(f"- [{eid}] 第 {'、'.join(str(c + 1) for c in chs)} 章已用")
+    if not lines:
+        return ""
+    listed = "\n".join(lines)
+    return f"""
+---
+
+## 前面章節已交代過的來源
+
+{listed}
+
+這些來源是誰、背景是什麼、主要數字與主張，前面章節已經講過。本章再用到時只取本章論點
+需要的那一點，一句帶到並標引用；本章的篇幅留給前面還沒出現的事實與來源。
+"""
+
+
 def measure_section_chars(text: str) -> int:
     """章節正文的字數：去掉引用標記、markdown 排版符號與空白後的字元數。"""
     return len(_LAYOUT_RE.sub("", _CITE_MARK_RE.sub("", text or "")))
 
+
+def _normalize_for_repeat(text: str) -> str:
+    return _LAYOUT_RE.sub("", _CITE_MARK_RE.sub("", text or ""))
+
+
+def find_cross_chapter_repeats(contents: List[str], min_len: int = 16):
+    """找出在兩章以上逐字重複出現的片段，回 [(片段, [章號 0-based])]。
+
+    用途是量測「同一件事每章重講」：模型重講前章時常整段照搬來源的數字與說法。
+    只抓逐字重複（去掉引用標記與排版後），換句話說的重複抓不到——那要靠 prompt。
+    """
+    norm = [_normalize_for_repeat(c) for c in contents]
+    first_seen: Dict[str, int] = {}
+    for ci, t in enumerate(norm):
+        for i in range(len(t) - min_len + 1):
+            first_seen.setdefault(t[i:i + min_len], ci)
+    repeats = []
+    for ci, t in enumerate(norm):
+        i = 0
+        while i <= len(t) - min_len:
+            src = first_seen.get(t[i:i + min_len])
+            if src is not None and src < ci:
+                j = i + min_len
+                while j < len(t) and t[i:j + 1] in norm[src]:
+                    j += 1
+                repeats.append((t[i:j], [src, ci]))
+                i = j
+            else:
+                i += 1
+    return repeats

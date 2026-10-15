@@ -17,6 +17,7 @@ from reasoning.prompts.prose_discipline import (
     build_shape_block,
     build_comparison_fields_block,
     build_length_block,
+    build_source_reuse_block,
     is_known_report_shape,
     normalize_report_shape,
 )
@@ -462,6 +463,8 @@ class WriterPromptBuilder:
         # report_shape 由 Stage 4 format_specs 決定；None → 預設倒三角新聞骨架。
         report_shape: Optional[str] = None,
         comparison_fields: Optional[List[str]] = None,
+        # 篇幅與跨章重複（2026-10-15）：evidence_id → 已引用該來源的前面章號（0-based）。
+        prior_source_chapters: Optional[Dict[int, List[int]]] = None,
     ) -> str:
         """
         Build per-section compose prompt for Live Research mode (Task 7).
@@ -1061,6 +1064,7 @@ class WriterPromptBuilder:
         length_block = (
             "" if (_has_word_target or revise_instruction) else build_length_block()
         )
+        source_reuse_block = build_source_reuse_block(prior_source_chapters)
         length_reminder = (
             "5. 交稿前估一次 section_content 的長度；超過上方「篇幅」的上限，就照該節的順序刪。\n"
             if length_block else ""
@@ -1103,7 +1107,7 @@ class WriterPromptBuilder:
 - ✅ 正確：「再生能源占比達 32.5%[1]，超越預期目標[2]。」
 - ❌ 錯誤：「...政策成效顯著。\n\n來源：[N1] [N2] [N3] ...」（段末整串清單 dump）
 - ❌ 錯誤：使用 evidence pool 之外（發明）的 ID
-{evidence_block}{writer_view_block}{binding_block}{grounding_discipline_block}{calibration_block}{shape_block}{prose_block}{length_block}{traceability_block}{open_gaps_block}{comparison_block}{style_block}{format_block}{special_elements_block}{revision_block}{ungrounded_revision_block}{prior_entities_block}{context_block}{kg_block}{outline_block}{prev_summary_block}
+{evidence_block}{writer_view_block}{binding_block}{grounding_discipline_block}{calibration_block}{shape_block}{prose_block}{length_block}{source_reuse_block}{traceability_block}{open_gaps_block}{comparison_block}{style_block}{format_block}{special_elements_block}{revision_block}{ungrounded_revision_block}{prior_entities_block}{context_block}{kg_block}{outline_block}{prev_summary_block}
 ---
 
 ## 輸出格式（LiveWriterSectionOutput JSON）
